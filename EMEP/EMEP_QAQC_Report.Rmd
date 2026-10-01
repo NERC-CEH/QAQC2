@@ -2569,9 +2569,16 @@ run_info_table %>%
       rows = Parameter == 'Run directory'
     )
   )
-```
 
-**QAQC output in:** `r QAQC_DIR`
+cat(
+  glue::glue(
+    "**QAQC output in:**\n\n",
+    "<div class='file-path'>",
+    "{format_file_path(QAQC_DIR)}",
+    "</div>\n\n"
+  )
+)
+```
 
 ```{r run_input_files, echo=FALSE, eval=INCLUDE_CONFIG_RUNSCRIPT_FILES, results='asis'}
 
