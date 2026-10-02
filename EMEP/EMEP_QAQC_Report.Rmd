@@ -2546,8 +2546,8 @@ run_info_table = tibble::tibble(
 ```
 
 # Run Info
-```{r run_info_table_print, results = 'asis'}
-run_info_gt = run_info_table %>%
+```{r run_info_table_print}
+run_info_table %>%
   gt::gt() %>%
   gt::cols_label(
     test = test_label,
@@ -2569,19 +2569,12 @@ run_info_gt = run_info_table %>%
       rows = Parameter == 'Run directory'
     )
   )
+```
 
-cat(
-  as.character(
-    gt::as_raw_html(
-      run_info_gt
-    )
-  ),
-  '\n\n'
-)
-
+```{r print_qaqc_dir, results='asis'}
 cat(
   glue::glue(
-    "\n\n**QAQC output in:**\n\n",
+    "**QAQC output in:**\n\n",
     "<div class='file-path'>",
     "{format_file_path(QAQC_DIR)}",
     "</div>\n\n"
