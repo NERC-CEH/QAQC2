@@ -81,11 +81,30 @@ if (!fs::file_exists(REPORT_SOURCE_FILE)) {
   )
 }
 
+QAQC_WORKING_DIR = Sys.getenv(
+  'SLURM_SUBMIT_DIR',
+  unset = getwd()
+)
+
+if (!fs::dir_exists(QAQC_WORKING_DIR)) {
+  stop(
+    glue::glue(
+      'QAQC working directory not found: {QAQC_WORKING_DIR}'
+    ),
+    call. = FALSE
+  )
+}
+
+QAQC_WORKING_DIR = fs::path_abs(
+  QAQC_WORKING_DIR
+)
+
 rmarkdown::render(
   input = REPORT_SOURCE_FILE,
   output_file = REPORT_FNAME,
   output_dir = report_pth_out,
   intermediates_dir = report_pth_out,
+  knit_root_dir = QAQC_WORKING_DIR,
   params = list(
     qaqc_user = qaqc_user
   )
