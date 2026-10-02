@@ -83,10 +83,9 @@ if (!fs::file_exists(REPORT_SOURCE_FILE)) {
 
 rmarkdown::render(
   input = REPORT_SOURCE_FILE,
-  output_file = fs::path(
-    report_pth_out,
-    REPORT_FNAME
-  ),
+  output_file = REPORT_FNAME,
+  output_dir = report_pth_out,
+  intermediates_dir = report_pth_out,
   params = list(
     qaqc_user = qaqc_user
   )
