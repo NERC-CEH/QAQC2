@@ -9283,16 +9283,19 @@ if (ox_var %in% OBSERVED_POLLS) {
     )
 }
 
-qaqc_task_timings[['Load reference MOBS']] = tibble::tibble(
-  task = 'Load reference MOBS',
-  runtime_seconds = as.numeric(
-    difftime(
-      Sys.time(),
-      load_ref_mobs_task_start,
-      units = 'secs'
+if (NEED_MOBS && !is.null(REF_MOBS_DIR)) {
+  qaqc_task_timings[['Load reference MOBS']] = tibble::tibble(
+    task = 'Load reference MOBS',
+    runtime_seconds = as.numeric(
+      difftime(
+        Sys.time(),
+        load_ref_mobs_task_start,
+        units = 'secs'
+      )
     )
   )
-)
+}
+
 ```
 
 ```{r mobs_prep, results = 'asis', eval = NEED_MOBS}
