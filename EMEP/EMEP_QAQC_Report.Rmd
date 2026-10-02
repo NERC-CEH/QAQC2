@@ -7,7 +7,7 @@ params:
 output:
   rmdformats::readthedown:
     toc_depth: 3
-fig_width: 10
+fig_width: 10 
 ---
 
 ```{r setup, include=FALSE}
@@ -2546,8 +2546,8 @@ run_info_table = tibble::tibble(
 ```
 
 # Run Info
-```{r run_info_table_print}
-run_info_table %>%
+```{r run_info_table_print, results = 'asis'}
+run_info_gt = run_info_table %>%
   gt::gt() %>%
   gt::cols_label(
     test = test_label,
@@ -2571,8 +2571,17 @@ run_info_table %>%
   )
 
 cat(
+  as.character(
+    gt::as_raw_html(
+      run_info_gt
+    )
+  ),
+  '\n\n'
+)
+
+cat(
   glue::glue(
-    "**QAQC output in:**\n\n",
+    "\n\n**QAQC output in:**\n\n",
     "<div class='file-path'>",
     "{format_file_path(QAQC_DIR)}",
     "</div>\n\n"
