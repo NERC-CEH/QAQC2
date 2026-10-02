@@ -13104,7 +13104,15 @@ qaqc_run_seconds = as.numeric(
 
 
 qaqc_task_timings = dplyr::bind_rows(
-  qaqc_task_timings
+  c(
+    list(
+      tibble::tibble(
+        task = character(),
+        runtime_seconds = double()
+      )
+    ),
+    qaqc_task_timings
+  )
 ) %>%
   dplyr::mutate(
     runtime = purrr::map_chr(
