@@ -8579,6 +8579,14 @@ if (COLLATE_MOBS) {
     emep_file
   }
   
+  mobs_resolutions = mobs_iterator %>%
+  dplyr::distinct(
+    obs_time_resolution
+  ) %>%
+  dplyr::filter(
+    !is.na(obs_time_resolution)
+  )
+  
   mobs_emep_files = mobs_resolutions %>%
     dplyr::mutate(
       emep_file = purrr::map_chr(
