@@ -11537,13 +11537,13 @@ if (isTRUE(MOBS_EVALUATION_OUTPUTS)) {
     mobs_spatial_modstats_available
   
   testref_mobs_temporal_modstats_available =
-    ref_submitted &&
+    !is.null(REF_MOBS_DIR) &&
     isTRUE(testref_period_overlap) &&
     !is.null(testref_mobs_site_stats) &&
     nrow(testref_mobs_site_stats) > 0
   
   testref_mobs_spatial_modstats_available =
-    ref_submitted &&
+    !is.null(REF_MOBS_DIR) &&
     isTRUE(testref_period_overlap) &&
     !is.null(testref_mobs_stats_table) &&
     nrow(testref_mobs_stats_table) > 0
@@ -12269,7 +12269,7 @@ purrr::iwalk(
 )
 ```
 
-```{r mobs_testref_scatter, eval=PLOT_MOBS_SCATTER_PLOTS && ref_submitted && testref_period_overlap}
+```{r mobs_testref_scatter, eval=PLOT_MOBS_SCATTER_PLOTS && !is.null(REF_MOBS_DIR) && testref_period_overlap}
 
 # Join the Test and Reference modelled-period site means.
 testref_scatter_base = testref_test_site_means %>%
@@ -12378,7 +12378,7 @@ testref_scatter_plots =
 
 ```
 
-```{r testref_scatter_plots_user_text, results='asis', eval=PLOT_MOBS_SCATTER_PLOTS && ref_submitted && testref_period_overlap}
+```{r testref_scatter_plots_user_text, results='asis', eval=PLOT_MOBS_SCATTER_PLOTS && !is.null(REF_MOBS_DIR) && testref_period_overlap}
 # The {.tabset} attribute is required for the pollutant tabs
 # in the interactive report.
 if (REPORT_STYLE == 'interactive') {
@@ -12427,7 +12427,7 @@ cat(
 )
 ```
 
-```{r mobs_testref_scatter_render, results='asis', eval=PLOT_MOBS_SCATTER_PLOTS && ref_submitted && testref_period_overlap}
+```{r mobs_testref_scatter_render, results='asis', eval=PLOT_MOBS_SCATTER_PLOTS && !is.null(REF_MOBS_DIR) && testref_period_overlap}
 purrr::iwalk(
   testref_scatter_plots_interactive,
   function(p, var_nm) {
