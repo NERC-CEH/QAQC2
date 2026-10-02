@@ -13092,7 +13092,7 @@ qaqc_task_timings[['MOBS tasks total']] = tibble::tibble(
 
 ```
 
-```{r qaqc timing, results='asis'}
+```{r qaqc timing, results='asis', eval=SHOW_QAQC_RUN_INFO}
 
 qaqc_run_seconds = as.numeric(
   difftime(
