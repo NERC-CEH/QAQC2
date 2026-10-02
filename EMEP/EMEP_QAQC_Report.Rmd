@@ -9910,6 +9910,12 @@ pdf_opts = furrr::furrr_options(
   )
 )
 
+old_future_device = getOption('future.device')
+
+options(
+  future.device = FALSE
+)
+
 mobs_plotlist %>%
   furrr::future_walk(
     mobs_tseries_to_pdf,
@@ -9930,6 +9936,10 @@ mobs_plotlist %>%
     legend_labels = mobs_tseries_labels,
     .options = pdf_opts
   )
+
+options(
+  future.device = old_future_device
+)
 
 future::plan(future::sequential)
 
