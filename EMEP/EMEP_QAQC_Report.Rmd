@@ -10866,7 +10866,7 @@ test_mobs_stats_table = test_mobs_stats %>%
 
 ```
 
-```{r mobs_report_stats_comp, include=FALSE,   eval=isTRUE(MOBS_EVALUATION_OUTPUTS) && ref_submitted && testref_period_overlap}
+```{r mobs_report_stats_comp, include=FALSE,   eval=isTRUE(MOBS_EVALUATION_OUTPUTS) && !is.null(REF_MOBS_DIR) && testref_period_overlap}
 
 # Prepare Test and Reference MOBS data for comparison over their
 # common modelled period.
