@@ -10543,6 +10543,27 @@ mobs_tseries_to_pdf = function(
   
   # Export PDF.
   
+  grDevices::pdf(
+    file = plot_pth_out,
+    paper = 'a4',
+    height = 10,
+    width = 7,
+    onefile = TRUE
+  )
+  
+  pdf_device = grDevices::dev.cur()
+  
+  on.exit(
+    {
+      if (pdf_device %in% grDevices::dev.list()) {
+        grDevices::dev.off(
+          pdf_device
+        )
+      }
+    },
+    add = TRUE
+  )
+  
   export = gridExtra::marrangeGrob(
     grobs = plot_list,
     nrow = ppp,
@@ -10552,12 +10573,12 @@ mobs_tseries_to_pdf = function(
     )
   )
   
-  ggplot2::ggsave(
-    filename = plot_pth_out,
-    plot = export,
-    paper = 'a4',
-    height = 10,
-    width = 7
+  print(
+    export
+  )
+  
+  grDevices::dev.off(
+    pdf_device
   )
   
   invisible(
