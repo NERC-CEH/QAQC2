@@ -24690,13 +24690,17 @@ select_emep_file_from_dir = function(
     )
   }
   
-  # List NetCDF files only
+  # List standard EMEP NetCDF files only.
   
   nc_files = fs::dir_ls(
     EMEP_dir,
     recurse = FALSE,
     regexp = '\\.nc$'
-  )
+  ) %>%
+    stringr::str_subset(
+      '_LF_',
+      negate = TRUE
+    )
   
   if (most_resolved || least_resolved) {
     
