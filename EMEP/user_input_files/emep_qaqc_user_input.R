@@ -35,7 +35,7 @@ REF_CRS = MODEL_CRS_STEREO
 
 # Provide an absolute path.
 
-EMEP_VAR_PARAMS_FILE = fs::path('var_params_files/emep_vars_parameters.R')
+EMEP_VAR_PARAMS_FILE = NULL
 
 # NCL palettes -------------------------------------------------------------
 
@@ -146,18 +146,15 @@ SHOW_QAQC_RUN_INFO = TRUE
 # EMISSION CHECKS ----------------------------------------------------------
 
 # Region geodata used by the emission inventory and temporal checks.
-
-REGION_GEODATA_DIR =
-  '/mnt/ceph/polar_atmospheric/home/tomlis65/EMEP_QAQC/source_code/EMEP_QAQC/Area_masks/EMEP'
-EMISSION_INVENTORY_MIN_COVERAGE = 0.95
-
+# for EU domain: '/mnt/ceph/polar_atmospheric/home/tomasliska/QAQC_ANCILLARY_FILES/Area_masks/EMEP'
+REGION_GEODATA_DIR = NULL
 
 # Emission inventory check -------------------------------------------------
 
 # The inventory check uses the EMEP 'fullrun' output
-
+# for EMEP inventory: '/mnt/ceph/polar_atmospheric/home/tomasliska/QAQC_ANCILLARY_FILES/Emission_Inventory_files/EMEP/2025_update/country_totals_2022.txt'
 EMISSION_INVENTORY_PTH = list(
-  outer = '/mnt/ceph/polar_atmospheric/home/tomlis65/EMEP_QAQC/source_code/EMEP_QAQC/Emission_Inventory_files/EMEP/2025_update/country_totals_2022.txt',
+  outer = NULL,
   inner = NULL
 )
 
@@ -167,6 +164,9 @@ EMISSION_INVENTORY_TYPE = list(
   outer = 'emep',
   inner = 'naei'
 )
+
+EMISSION_INVENTORY_MIN_COVERAGE = 0.95
+
 
 # still in development and not currently used
 EMISSION_NETCDF_FILES = NULL
@@ -271,8 +271,8 @@ SUMMARY_REGION_GEODATA_DIR = REGION_GEODATA_DIR
 # geofile name, e.g. 'Mongolia.gpkg' -> 'Mongolia' and '..._GB.gpkg' -> 'GB'.
 # Use 'all' for all available regions and prefix IDs with '-' to exclude them.
 SUMMARY_REGIONS = list(
-  outer = 'GB',
-  inner = 'GB'
+  outer = NULL,
+  inner = NULL
 )
 
 # Highlight test-reference differences exceeding this percentage in the report
@@ -318,7 +318,7 @@ SUMMARY_MAP_TEST_STAT = 'mean'
 SUMMARY_MAP_REF_STAT = 'mean'
 
 # Optional spatial crop and mask applied to all summary maps.
-SUMMARY_MAP_DOMAIN_CROP = NULL # '/Users/tomasliska/Desktop/Work/EMEP_QAQC/Area_masks/WHO/Ubi_bbox.gpkg'
+SUMMARY_MAP_DOMAIN_CROP = NULL 
 SUMMARY_MAP_DOMAIN_MASK = NULL
 
 DIFF_DIRECTION = 'test_minus_ref'
@@ -536,8 +536,8 @@ MOBS_USE_LOCAL_TIME = TRUE
 
 # Geodata used to determine local time zones for MOBS observations.
 TIMEZONE_FILE_PTH =
-  fs::path('/mnt/ceph/polar_atmospheric/home/tomlis65/EMEP_QAQC/source_code/',
-           'EMEP_QAQC/QAQC2/EMEP/utils/timezones/combined-shapefile-with-oceans.shp')
+  fs::path('/home/tomasliska/QAQC_ANCILLARY_FILES/Timezones/combined-shapefile-with-oceans.shp')
+
 # Plot all requested variables. If FALSE, only variables with observations
 # are plotted.
 PLOT_ALL_MOBS_VARS = TRUE
