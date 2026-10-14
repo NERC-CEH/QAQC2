@@ -39,7 +39,7 @@ USER_INPUT_FILE = Sys.getenv("EMEP_QAQC_USER_INPUT")
 
 if (USER_INPUT_FILE == "") {
   # For local/laptop runs, set the user input file manually here.
-  USER_INPUT_FILE = "/Users/tomasliska/Desktop/Work/EMEP_QAQC/emep_qaqc_user_input2.R"
+  USER_INPUT_FILE = "/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2_development/Test/emep_qaqc_user_input2.R"
 }
 
 if (!fs::file_exists(USER_INPUT_FILE)) {
@@ -155,9 +155,9 @@ if (ref_submitted && (!exists('REF_CRS') || is.null(REF_CRS))) {
 
 # load qaqc input files
 
-source(fs::path('../utils/myquicktext.R'))
-source(fs::path('../utils/utils.R'))
-source(fs::path('../utils/emep_qaqc_funcs.R'))
+source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/myquicktext.R'))
+source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/utils.R'))
+source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/emep_qaqc_funcs.R'))
 
 platform = runtime_platform() # in utils.R
 
@@ -261,6 +261,28 @@ domain_setup = tibble::tibble(
       fs::path_file
     )
   )
+
+show_static_summary_maps =
+  REPORT_STYLE == 'static' ||
+  (
+    REPORT_STYLE == 'interactive' &&
+    PLOT_STATIC_SUMMARY_MAPS
+  )
+
+show_interactive_summary_maps =
+  REPORT_STYLE == 'interactive' &&
+  PLOT_INTERACTIVE_SUMMARY_MAPS
+
+make_static_summary_maps =
+  show_static_summary_maps ||
+  SAVE_STATIC_OUTPUTS
+
+make_interactive_summary_maps =
+  show_interactive_summary_maps
+
+make_summary_maps =
+  make_static_summary_maps ||
+  make_interactive_summary_maps
 
 # time qaqc
 
@@ -6653,28 +6675,6 @@ summary_map_grobs = NULL
 summary_map_leaflet = NULL
 report_map_height = NULL
 
-show_static_summary_maps =
-  REPORT_STYLE == 'static' ||
-  (
-    REPORT_STYLE == 'interactive' &&
-    PLOT_STATIC_SUMMARY_MAPS
-  )
-
-show_interactive_summary_maps =
-  REPORT_STYLE == 'interactive' &&
-  PLOT_INTERACTIVE_SUMMARY_MAPS
-
-make_static_summary_maps =
-  show_static_summary_maps ||
-  SAVE_STATIC_OUTPUTS
-
-make_interactive_summary_maps =
-  show_interactive_summary_maps
-
-make_summary_maps =
-  make_static_summary_maps ||
-  make_interactive_summary_maps
-
 if (make_summary_maps) {
   
   # Use the first submitted Test domain to identify the variables available
@@ -7098,7 +7098,7 @@ cat(
 cat('\n\n')
 ```
 
-```{r create-static-summary-maps, include=FALSE, eval=(PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS) && SAVE_STATIC_OUTPUTS}
+```{r create-static-summary-maps, include=FALSE, eval=make_summary_maps}
 if (make_static_summary_maps) {
 
   # Format summary statistic for map titles
@@ -7126,7 +7126,8 @@ if (make_static_summary_maps) {
   # Domain order is inherited from summary_map_data, which in turn follows
   # domain_setup (e.g. outer then inner).
   # -----------------------------------------------------------------------
-
+  map_geo_features = load_map_geo_features(MAPPING_GEO_LIST)
+  
   summary_map_plots = summary_map_data %>%
     purrr::imap(
       function(this_var_diff, v) {
@@ -7175,6 +7176,7 @@ if (make_static_summary_maps) {
                 ),
                 emep_var = plot_vars,
                 var_params_list = EMEP_VAR_PARAMS_LIST,
+                map_geo_params_list = map_geo_features,
                 testref_pal_pth = TESTREF_PALETTE,
                 absdiff_pal_pth = ABSDIFF_PALETTE,
                 reldiff_pal_pth = RELDIFF_PALETTE,
