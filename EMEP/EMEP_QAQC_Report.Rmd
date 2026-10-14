@@ -155,9 +155,9 @@ if (ref_submitted && (!exists('REF_CRS') || is.null(REF_CRS))) {
 
 # load qaqc input files
 
-source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/myquicktext.R'))
-source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/utils.R'))
-source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/emep_qaqc_funcs.R'))
+source(fs::path('../utils/myquicktext.R'))
+source(fs::path('../utils/utils.R'))
+source(fs::path('../utils/emep_qaqc_funcs.R'))
 
 platform = runtime_platform() # in utils.R
 
