@@ -3645,65 +3645,6 @@ format_elements_to_print = function(x,
   )
 }
 
-format_emep_maps_page_title = function(
-    test_dir,
-    ref_dir = NULL,
-    stat,
-    wrap_width = 50
-) {
-  
-  stat_lab = stringr::str_to_upper(
-    stat
-  )
-  
-  format_run_line = function(
-    label,
-    run_dir
-  ) {
-    
-    run_desc = stringr::str_glue(
-      '{run_dir} - {stat_lab}'
-    )
-    
-    stringr::str_c(
-      label,
-      ' ',
-      stringr::str_wrap(
-        run_desc,
-        width = wrap_width,
-        exdent = nchar(label) + 1
-      )
-    )
-  }
-  
-  if (is.null(ref_dir)) {
-    
-    pg_title = format_run_line(
-      label = 'Model run:',
-      run_dir = test_dir
-    )
-    
-  } else {
-    
-    pg_title = stringr::str_c(
-      format_run_line(
-        label = 'Test run:',
-        run_dir = test_dir
-      ),
-      '\n',
-      format_run_line(
-        label = 'Reference run:',
-        run_dir = ref_dir
-      )
-    )
-  }
-  
-  stringr::str_c(
-    pg_title,
-    '\n'
-  )
-}
-
 format_file_path = function(path) {
   stringr::str_replace_all(
     path,
@@ -4930,65 +4871,6 @@ format_wrf_attr_value = function(x) {
   }
   
   paste(as.character(x), collapse = ', ')
-}
-
-format_wrf_maps_page_title = function(test_dir,
-                                      ref_dir = NULL,
-                                      domain,
-                                      stat,
-                                      wrap_width = 50) {
-  
-  test_dir = clean_wrf_run_dir(test_dir)
-  ref_dir = clean_wrf_run_dir(ref_dir)
-  
-  stat_lab = if (stat == 'mean') {
-    'mean'
-  } else if (stat == 'accum') {
-    'accum'
-  } else {
-    stat
-  }
-  
-  format_run_line = function(label, run_dir) {
-    
-    run_desc = stringr::str_glue(
-      '{run_dir} - domain {domain} {str_to_upper(stat_lab)}'
-    )
-    
-    stringr::str_c(
-      label,
-      ' ',
-      stringr::str_wrap(
-        run_desc,
-        width = wrap_width,
-        exdent = nchar(label) + 1
-      )
-    )
-  }
-  
-  if (is.na(ref_dir)) {
-    
-    pg_title = format_run_line(
-      label = 'Model run:',
-      run_dir = test_dir
-    )
-    
-  } else {
-    
-    pg_title = stringr::str_c(
-      format_run_line(
-        label = 'Test run:',
-        run_dir = test_dir
-      ),
-      '\n',
-      format_run_line(
-        label = 'Reference run:',
-        run_dir = ref_dir
-      )
-    )
-  }
-  
-  stringr::str_c(pg_title, '\n')
 }
 
 get_auto_data = function(
@@ -24536,6 +24418,13 @@ read_wrf_summary_file = function(pth,
     
   } else {
     x = x[setdiff(names(x), c('XLAT', 'XLONG'))]
+  }
+  
+  if ('PSFC' %in% names(x) &&
+      units::deparse_unit(x[['PSFC']]) == 'Pa') {
+    
+    x[['PSFC']] = units::set_units(x[['PSFC']], hPa)
+    
   }
   
   sf::st_crs(x) = crs
