@@ -9898,7 +9898,7 @@ pdf_opts = furrr::furrr_options(
     'create_blank_plot',
     'get_mobs_plot_aesthetics',
     'EMEP_VAR_PARAMS_LIST',
-    'format_var_label_emep',
+    'format_var_label',
     'resolve_mobs_var_id',
     'resolve_var_id',
     'get_var_param',
@@ -10469,7 +10469,7 @@ if (length(MOBS_STATION_REPORT_TSERIES) > 0) {
         }
         
         
-        var_heading = format_var_label_emep(
+        var_heading = format_var_label(
           var = var_param_nm,
           var_params_list = EMEP_VAR_PARAMS_LIST,
           context = 'mobs',
@@ -12187,7 +12187,7 @@ purrr::iwalk(
   scatter_plots_interactive,
   function(p, var_nm) {
     
-    var_heading = format_var_label_emep(
+    var_heading = format_var_label(
       mobs_var_params[[var_nm]],
       var_params_list = EMEP_VAR_PARAMS_LIST,
       context = 'mobs',
@@ -12434,7 +12434,7 @@ purrr::iwalk(
   testref_scatter_plots_interactive,
   function(p, var_nm) {
 
-    var_heading = format_var_label_emep(
+    var_heading = format_var_label(
       mobs_var_params[[var_nm]],
       var_params_list = EMEP_VAR_PARAMS_LIST,
       context = 'mobs',
@@ -12640,7 +12640,7 @@ mobs_map_var_labs = vars_avail %>%
   purrr::map_chr(
     function(var_nm) {
 
-      format_var_label_emep(
+      format_var_label(
         mobs_var_params[[var_nm]],
         var_params_list = EMEP_VAR_PARAMS_LIST,
         context = 'mobs',
@@ -12980,7 +12980,7 @@ if (
       vars_avail,
       function(var_nm) {
 
-        var_heading = format_var_label_emep(
+        var_heading = format_var_label(
           mobs_var_params[[var_nm]],
           var_params_list = EMEP_VAR_PARAMS_LIST,
           context = 'mobs',
