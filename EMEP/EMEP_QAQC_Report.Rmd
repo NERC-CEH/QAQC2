@@ -10136,9 +10136,20 @@ if (
   cat('## Time series plots\n\n')
 
   tseries_intro_sentences = c(
-    'The plots below compare modelled and observed pollutant concentrations at selected monitoring sites.',
-    'Observed values are shown as a shaded area and modelled values as a line.'
+    'The plots below compare modelled and observed pollutant concentrations at selected monitoring sites.'
   )
+  
+  if (identical(MOBS_TSERIES_OBS_STYLE, 'ribbon')) {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Observed values are shown as a shaded area and modelled values as a line.'
+    )
+  } else {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Observed and modelled values are shown as lines.'
+    )
+  }
 
   if (isTRUE(MOBS_USE_LOCAL_TIME)) {
     tseries_intro_sentences = c(
