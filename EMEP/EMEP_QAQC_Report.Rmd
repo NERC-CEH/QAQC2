@@ -2044,44 +2044,45 @@ if (NEED_MOBS) {
     )
   }
 
-# Existing MOBS files are required when MOBS are needed but
-# are not being collated during this run.
-#
-# When REF_MOBS_DIR is supplied, use that directory.
-# Otherwise, use the current QAQC output directory.
-
-mobs_data_pth = REF_MOBS_DIR %||% data_pth_out
-
-if (!COLLATE_MOBS || !is.null(REF_MOBS_DIR)) {
-
-  checkmate::assert_directory_exists(
-    mobs_data_pth,
-    .var.name = 'MOBS data directory'
-  )
-
-  sites_used_pth = find_sites_used_file(
-    mobs_data_pth
-  )
-
-  if (is.null(sites_used_pth)) {
-    stop(
-      'Could not find Sites_used.rds or 00Sites_used.rds in: ',
+  # Existing MOBS files are required when MOBS are needed but
+  # are not being collated during this run.
+  #
+  # When REF_MOBS_DIR is supplied, use that directory.
+  # Otherwise, use the current QAQC output directory.
+  
+  mobs_data_pth = REF_MOBS_DIR %||% data_pth_out
+  
+  if (!COLLATE_MOBS || !is.null(REF_MOBS_DIR)) {
+  
+    checkmate::assert_directory_exists(
       mobs_data_pth,
-      call. = FALSE
+      .var.name = 'MOBS data directory'
     )
-  }
-
-  mobs_pths = fs::dir_ls(
-    mobs_data_pth,
-    regexp = '_mod_obs\\.rds$'
-  )
-
-  if (length(mobs_pths) == 0) {
-    stop(
-      'Could not find any mod_obs.rds files in: ',
+  
+    sites_used_pth = find_sites_used_file(
+      mobs_data_pth
+    )
+  
+    if (is.null(sites_used_pth)) {
+      stop(
+        'Could not find Sites_used.rds or 00Sites_used.rds in: ',
+        mobs_data_pth,
+        call. = FALSE
+      )
+    }
+  
+    mobs_pths = fs::dir_ls(
       mobs_data_pth,
-      call. = FALSE
+      regexp = '_mod_obs\\.rds$'
     )
+  
+    if (length(mobs_pths) == 0) {
+      stop(
+        'Could not find any mod_obs.rds files in: ',
+        mobs_data_pth,
+        call. = FALSE
+      )
+    }
   }
 }
 
