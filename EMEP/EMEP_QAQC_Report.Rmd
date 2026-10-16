@@ -10047,10 +10047,6 @@ get_report_tseries_vars_for_site = function(
   vars_selected
 }
 
-mobs_report_tseries_period = parse_mobs_tseries_period(
-  MOBS_STATION_REPORT_TSERIES_PERIOD %||% NULL
-)
-
 report_site_codes_used = intersect(
   report_site_codes,
   names(mobs_plotlist)
