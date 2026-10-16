@@ -2044,42 +2044,62 @@ if (NEED_MOBS) {
     )
   }
 
-  # Existing MOBS files are required when MOBS are needed but
+  # Existing Test MOBS files are required when MOBS are needed but
   # are not being collated during this run.
-  #
-  # When REF_MOBS_DIR is supplied, use that directory.
-  # Otherwise, use the current QAQC output directory.
-  
-  mobs_data_pth = REF_MOBS_DIR %||% data_pth_out
-  
-  if (!COLLATE_MOBS || !is.null(REF_MOBS_DIR)) {
-  
-    checkmate::assert_directory_exists(
-      mobs_data_pth,
-      .var.name = 'MOBS data directory'
-    )
-  
+
+  if (!COLLATE_MOBS) {
+
     sites_used_pth = find_sites_used_file(
-      mobs_data_pth
+      data_pth_out
     )
-  
+
     if (is.null(sites_used_pth)) {
       stop(
         'Could not find Sites_used.rds or 00Sites_used.rds in: ',
-        mobs_data_pth,
+        data_pth_out,
         call. = FALSE
       )
     }
-  
+
     mobs_pths = fs::dir_ls(
-      mobs_data_pth,
+      data_pth_out,
       regexp = '_mod_obs\\.rds$'
     )
-  
+
     if (length(mobs_pths) == 0) {
       stop(
         'Could not find any mod_obs.rds files in: ',
-        mobs_data_pth,
+        data_pth_out,
+        call. = FALSE
+      )
+    }
+  }
+
+  # Existing Reference MOBS files when supplied.
+
+  if (!is.null(REF_MOBS_DIR)) {
+
+    ref_sites_used_pth = find_sites_used_file(
+      REF_MOBS_DIR
+    )
+
+    if (is.null(ref_sites_used_pth)) {
+      stop(
+        'Could not find reference Sites_used.rds or 00Sites_used.rds in: ',
+        REF_MOBS_DIR,
+        call. = FALSE
+      )
+    }
+
+    ref_mobs_pths = fs::dir_ls(
+      REF_MOBS_DIR,
+      regexp = '_mod_obs\\.rds$'
+    )
+
+    if (length(ref_mobs_pths) == 0) {
+      stop(
+        'Could not find any reference mod_obs.rds files in: ',
+        REF_MOBS_DIR,
         call. = FALSE
       )
     }
@@ -8931,24 +8951,10 @@ mobs_domain_mask_sf = as_domain_polygon_sf(
   filter_name = 'domain mask'
 )
 
-# Use the specified MOBS directory when provided.
-# Otherwise, use the current QAQC output directory.
-
-mobs_data_pth = REF_MOBS_DIR %||% data_pth_out
-
-if (!fs::dir_exists(mobs_data_pth)) {
-  stop(
-    stringr::str_glue(
-      'MOBS data directory does not exist: {mobs_data_pth}'
-    ),
-    call. = FALSE
-  )
-}
-
 #read saved meta data
 
 sites_used_pth = find_sites_used_file(
-  mobs_data_pth
+  data_pth_out
 )
 
 sites_geo = readr::read_rds(
@@ -8978,10 +8984,7 @@ if (length(domain_site_codes) == 0) {
 }
 
 # Read saved mobs data, restricted to sites retained after domain filtering.
-mobs_pths_all = fs::dir_ls(
-  mobs_data_pth,
-  regexp = 'mod_obs\\.rds$'
-)
+mobs_pths_all = fs::dir_ls(data_pth_out, regexp = 'mod_obs\\.rds$')
 
 mobs_pth_codes = mobs_pths_all %>%
   fs::path_file() %>%
