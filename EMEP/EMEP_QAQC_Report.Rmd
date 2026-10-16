@@ -9948,22 +9948,6 @@ qaqc_task_timings[['Save MOBS time series to PDF']] = tibble::tibble(
 
 ```
 
-```{r mobs_report_selected_map, include=FALSE, eval = PLOT_MOBS_TSERIES && length(MOBS_STATION_REPORT_TSERIES) > 0}
-
-# Select sites to show as time series in the report.
-
-sites_geo_map_sub = sites_geo %>%
-  dplyr::filter(
-    code %in% report_site_codes
-  )
-
-highlight_sites_for_map = if (nrow(sites_geo_map_sub) > 0) {
-  sites_geo_map_sub
-} else {
-  NULL
-}
-```
-
 ```{r prepare-mobs-tseries-text-flags, echo = FALSE, eval = PLOT_MOBS_TSERIES}
 mobs_report_tseries_period = parse_mobs_tseries_period(
   MOBS_STATION_REPORT_TSERIES_PERIOD %||% NULL
