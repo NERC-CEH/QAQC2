@@ -4575,7 +4575,7 @@ format_temporal_var_label = function(
     output
   )
   
-  var_lab = format_var_label_emep(
+  var_lab = format_var_label(
     var = var,
     var_params_list = var_params_list,
     output = output,
@@ -8338,7 +8338,7 @@ make_modstats_dt = function(
         ),
         var = purrr::map_chr(
           var_param_nm,
-          format_var_label_emep,
+          format_var_label,
           var_params_list = var_params_list,
           context = 'mobs',
           output = 'html',
@@ -8522,7 +8522,7 @@ make_modstats_dt = function(
       dplyr::mutate(
         var_select_label = purrr::map_chr(
           var_id,
-          format_var_label_emep,
+          format_var_label,
           var_params_list = var_params_list,
           context = 'mobs',
           output = 'plain',
@@ -9092,7 +9092,7 @@ make_modstats_gt = function(
         ),
         var = purrr::map_chr(
           var_param_nm,
-          format_var_label_emep,
+          format_var_label,
           var_params_list = var_params_list,
           context = 'mobs',
           output = 'html',
@@ -11416,7 +11416,7 @@ plot_mobs_scatter = function(
       rng_range * pad
   }
   
-  lab_unit = format_var_label_emep(
+  lab_unit = format_var_label(
     var = var_param_nm,
     var_params_list = var_params_list,
     context = 'mobs',
@@ -12009,7 +12009,7 @@ plot_mobs_scatter_interactive = function(
     )
   )
   
-  var_title = format_var_label_emep(
+  var_title = format_var_label(
     var = var_id,
     var_params_list = var_params_list,
     context = 'mobs',
@@ -13903,7 +13903,7 @@ plot_mobs_testref_scatter_interactive = function(
     )
   )
   
-  var_title = format_var_label_emep(
+  var_title = format_var_label(
     var = var_id,
     var_params_list = var_params_list,
     context = 'mobs',
@@ -14210,7 +14210,7 @@ plot_mobs_tseries = function(
     
   } else if (!is.null(var_params_list)) {
     
-    label_vector = format_var_label_emep(
+    label_vector = format_var_label(
       var = var_id,
       var_params_list = var_params_list,
       context = 'mobs',
@@ -14893,7 +14893,7 @@ plot_mobs_tseries_interactive = function(
   
   # Variable plotting parameters.
   
-  var_title = format_var_label_emep(
+  var_title = format_var_label(
     var = var_id,
     var_params_list = var_params_list,
     context = 'mobs',
@@ -16222,7 +16222,7 @@ plot_summary_maps = function(
     if (!is.null(var_params_list)) {
       
       return(
-        format_var_label_emep(
+        format_var_label(
           var = var,
           var_params_list = var_params_list,
           context = 'maps',
@@ -19498,7 +19498,7 @@ plot_summary_maps_leaflet = function(
     if (!is.null(var_params_list)) {
       
       return(
-        format_var_label_emep(
+        format_var_label(
           var = var,
           var_params_list = var_params_list,
           context = 'maps',
@@ -20832,7 +20832,7 @@ plot_temporal_profiles = function(
             
           } else {
             
-            var_lab = format_var_label_emep(
+            var_lab = format_var_label(
               var = var_name,
               var_params_list = var_params_list,
               context = 'temporal',
@@ -26195,6 +26195,37 @@ weighted_mean_finite = function(x, w) {
   stats::weighted.mean(
     x[keep],
     w[keep]
+  )
+}
+
+wrap_file_path = function(path, width = 65) {
+  
+  if (is.null(path)) {
+    return(NULL)
+  }
+  
+  # Insert optional wrapping points after directory separators.
+  
+  path_wrappable = stringr::str_replace_all(
+    path,
+    '/',
+    '/ '
+  )
+  
+  # Wrap the path.
+  
+  wrapped_path = stringr::str_wrap(
+    path_wrappable,
+    width = width,
+    whitespace_only = FALSE
+  )
+  
+  # Remove spaces introduced after directory separators.
+  
+  stringr::str_replace_all(
+    wrapped_path,
+    '/ ',
+    '/'
   )
 }
 

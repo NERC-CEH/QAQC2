@@ -8951,10 +8951,24 @@ mobs_domain_mask_sf = as_domain_polygon_sf(
   filter_name = 'domain mask'
 )
 
+# Use the specified MOBS directory when provided.
+# Otherwise, use the current QAQC output directory.
+
+mobs_data_pth = REF_MOBS_DIR %||% data_pth_out
+
+if (!fs::dir_exists(mobs_data_pth)) {
+  stop(
+    stringr::str_glue(
+      'MOBS data directory does not exist: {mobs_data_pth}'
+    ),
+    call. = FALSE
+  )
+}
+
 #read saved meta data
 
 sites_used_pth = find_sites_used_file(
-  data_pth_out
+  mobs_data_pth
 )
 
 sites_geo = readr::read_rds(
@@ -8984,7 +8998,10 @@ if (length(domain_site_codes) == 0) {
 }
 
 # Read saved mobs data, restricted to sites retained after domain filtering.
-mobs_pths_all = fs::dir_ls(data_pth_out, regexp = 'mod_obs\\.rds$')
+mobs_pths_all = fs::dir_ls(
+  mobs_data_pth,
+  regexp = 'mod_obs\\.rds$'
+)
 
 mobs_pth_codes = mobs_pths_all %>%
   fs::path_file() %>%
