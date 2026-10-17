@@ -12534,7 +12534,7 @@ rm(
 )
 ```
 
-```{r prepare-mobs-stats-map-data, eval = PLOT_MOBS_MODSTAT_MAPS, include = FALSE}
+```{r prepare-mobs-stats-map-data, eval = PLOT_MOBS_MODSTAT_MAPS && && isTRUE(mobs_temporal_modstats_available), include = FALSE}
 
 sites_meta = if (inherits(sites_geo, 'sf')) {
   sf::st_drop_geometry(sites_geo)
@@ -12900,7 +12900,7 @@ if (
       '\n\n'
     )
 
-    # Statistic maps as tabs. The H4 heading is required by the
+    # Statistic maps as tabs. The H5 heading is required by the
     # R Markdown tabset mechanism but is below the report TOC depth.
 
     cat('##### Statistics {.tabset}\n\n')
