@@ -19291,8 +19291,11 @@ plot_summary_maps_leaflet = function(
       return(NULL)
     }
     
-    values =
-      pts[[value_name]]
+    values = pts[[value_name]]
+    
+    if (inherits(values, 'units')) {
+      values = units::drop_units(values)
+    }
     
     in_plot_range =
       is.finite(values) &
@@ -19325,14 +19328,10 @@ plot_summary_maps_leaflet = function(
       return(NULL)
     }
     
-    pts = pts %>%
-      dplyr::mutate(
-        hover_value =
-          format_hover_value(
-            .data[[value_name]],
-            digits = digits
-          )
-      )
+    pts$hover_value = format_hover_value(
+      values[in_plot_range & in_hover_range],
+      digits = digits
+    )
     
     pts_sf = sf::st_as_sf(
       pts,
@@ -20332,7 +20331,7 @@ plot_summary_maps_leaflet = function(
               stroke = FALSE,
               fillColor =
                 ~pal(plot_value),
-              fillOpacity = 1,
+              fillOpacity = opacity,
               group = map_type,
               layerId = paste0(
                 map_type,

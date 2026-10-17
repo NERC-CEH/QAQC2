@@ -12323,7 +12323,7 @@ testref_scatter_group_keys = testref_scatter_grouped %>%
   dplyr::group_keys() %>%
   dplyr::pull(var)
 
-testref_scatter_plots = testref_scatter_grouped %>%
+testref_scatter_plots_interactive = testref_scatter_grouped %>%
   dplyr::group_split() %>%
   purrr::set_names(testref_scatter_group_keys) %>%
   {
@@ -12341,8 +12341,8 @@ testref_scatter_plots = testref_scatter_grouped %>%
     ]
   }
 
-testref_scatter_plots =
-  testref_scatter_plots %>%
+testref_scatter_plots_interactive =
+  testref_scatter_plots_interactive %>%
   purrr::imap(function(df, var_nm) {
 
     plot_mobs_testref_scatter_interactive(
