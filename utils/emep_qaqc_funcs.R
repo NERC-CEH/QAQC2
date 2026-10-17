@@ -9370,6 +9370,7 @@ make_site_popup_content = function(
     'code',
     'station',
     'site',
+    'name',
     if (
       !is.null(group_column) &&
       'leaflet_group' %in% names(df)
