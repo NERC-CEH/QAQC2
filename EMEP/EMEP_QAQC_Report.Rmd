@@ -8965,6 +8965,21 @@ sites_geo = readr::read_rds(
     .keep_all = TRUE
   )
 
+if (
+  !is.null(MOBS_GROUPING_VAR) &&
+  !MOBS_GROUPING_VAR %in% names(sites_geo)
+) {
+
+  logger::log_warn(
+    glue::glue(
+      "MOBS grouping variable '{MOBS_GROUPING_VAR}' is not available ",
+      'in sites_geo. Site grouping will be disabled.'
+    )
+  )
+
+  MOBS_GROUPING_VAR = NULL
+}
+
 sites_geo = apply_domain_filter_sites(
   sites_geo = sites_geo,
   domain_crop = NULL,
