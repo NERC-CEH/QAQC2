@@ -32,8 +32,8 @@ message(glue::glue('Using WRF QAQC user input file: {USER_INPUT_FILE}'))
 
 source(USER_INPUT_FILE)
 
-source('emep_qaqc_funcs2_WIP_tester.R')
-source('../utils.R')
+source('/home/tomasliska/QAQC_SOURCE_CODE/utils/emep_qaqc_funcs.R')
+source('/home/tomasliska/QAQC_SOURCE_CODE/utils/utils.R')
 
 platform = runtime_platform()
 
@@ -109,7 +109,7 @@ logger::log_info('Workers: {collate_workers}')
 
 # INPUT FILES -------------------------------------------------------------
 
-wrf_files = WRF_DIR %>%
+wrf_files = TEST_DIR %>%
   fs::dir_ls() %>%
   stringr::str_subset(stringr::str_c('wrfout_', WRF_DOMAIN)) %>%
   sort()

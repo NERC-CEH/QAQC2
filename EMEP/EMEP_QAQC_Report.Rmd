@@ -12549,7 +12549,7 @@ rm(
 )
 ```
 
-```{r prepare-mobs-stats-map-data, eval = PLOT_MOBS_MODSTAT_MAPS && && isTRUE(mobs_temporal_modstats_available), include = FALSE}
+```{r prepare-mobs-stats-map-data, eval = PLOT_MOBS_MODSTAT_MAPS && isTRUE(mobs_temporal_modstats_available), include = FALSE}
 
 sites_meta = if (inherits(sites_geo, 'sf')) {
   sf::st_drop_geometry(sites_geo)
