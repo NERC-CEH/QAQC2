@@ -262,27 +262,17 @@ domain_setup = tibble::tibble(
     )
   )
 
-show_static_summary_maps =
-  REPORT_STYLE == 'static' ||
-  (
-    REPORT_STYLE == 'interactive' &&
-    PLOT_STATIC_SUMMARY_MAPS
-  )
-
-show_interactive_summary_maps =
-  REPORT_STYLE == 'interactive' &&
+create_summary_map_data =
+  PLOT_STATIC_SUMMARY_MAPS ||
   PLOT_INTERACTIVE_SUMMARY_MAPS
 
 make_static_summary_maps =
-  show_static_summary_maps ||
-  SAVE_STATIC_OUTPUTS
+  PLOT_STATIC_SUMMARY_MAPS ||
+  (PLOT_INTERACTIVE_SUMMARY_MAPS && SAVE_STATIC_OUTPUTS)
 
 make_interactive_summary_maps =
-  show_interactive_summary_maps
-
-make_summary_maps =
-  make_static_summary_maps ||
-  make_interactive_summary_maps
+  REPORT_STYLE == 'interactive' &&
+  PLOT_INTERACTIVE_SUMMARY_MAPS
 
 # time qaqc
 
@@ -6665,7 +6655,7 @@ qaqc_task_timings[['EMEP mass budget']] = tibble::tibble(
 )
 ```
 
-```{r create-summary-map-data, eval = PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS, include=FALSE}
+```{r create-summary-map-data, eval = create_summary_map_data, include=FALSE}
 
 task_start = Sys.time()
 
@@ -6675,7 +6665,7 @@ summary_map_grobs = NULL
 summary_map_leaflet = NULL
 report_map_height = NULL
 
-if (make_summary_maps) {
+if (create_summary_map_data) {
   
   # Use the first submitted Test domain to identify the variables available
   # in the selected mapping file.
@@ -6930,7 +6920,7 @@ if (make_summary_maps) {
 
 ```
 
-```{r summary_maps_user_text, eval = PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS, results = 'asis'}
+```{r summary_maps_user_text, eval = create_summary_map_data, results = 'asis'}
 
 summary_map_test_stat_text = format_summary_stat_plural(
   SUMMARY_MAP_TEST_STAT
@@ -7071,7 +7061,7 @@ if (ref_submitted) {
   cat('\n\n')
 }
 
-if (show_interactive_summary_maps) {
+if (make_interactive_summary_maps) {
   
   cat(
     paste(
@@ -7098,7 +7088,7 @@ cat(
 cat('\n\n')
 ```
 
-```{r create-static-summary-maps, include=FALSE, eval=make_summary_maps}
+```{r create-static-summary-maps, include=FALSE, eval=make_static_summary_maps}
 if (make_static_summary_maps) {
 
   # Format summary statistic for map titles
@@ -7759,7 +7749,7 @@ if (make_static_summary_maps) {
   # chunks can share one figure height.
   # -----------------------------------------------------------------------
 
-  if (show_static_summary_maps) {
+  if (PLOT_STATIC_SUMMARY_MAPS) {
 
     report_map_heights = summary_map_plots %>%
       purrr::map(
@@ -7800,7 +7790,7 @@ if (make_static_summary_maps) {
 }
 ```
 
-```{r save-static-summary-maps-pdf, include=FALSE, eval=(PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS) && SAVE_STATIC_OUTPUTS}
+```{r save-static-summary-maps-pdf, include=FALSE, eval=create_summary_map_data && SAVE_STATIC_OUTPUTS}
 summary_map_pdf_export = c(
   list(summary_map_front_page),
   summary_map_contents_pages,
@@ -7832,7 +7822,7 @@ logger::log_info(
 )
 ```
 
-```{r create-interactive-summary-maps, eval=REPORT_STYLE == 'interactive' && PLOT_INTERACTIVE_SUMMARY_MAPS}
+```{r create-interactive-summary-maps, eval=make_interactive_summary_maps}
 
 interactive_summary_map_vars = intersect(
   summary_map_vars_report,
@@ -7918,7 +7908,7 @@ summary_map_leaflet = summary_map_data[
   )
 ```
 
-```{r include-summary-maps, results='asis', eval=PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS, fig.width=8.4}
+```{r include-summary-maps, results='asis', eval=create_summary_map_data, fig.width=8.4}
 available_summary_map_vars = unique(
   c(
     names(summary_map_plots %||% list()),
@@ -8067,13 +8057,13 @@ summary_map_child = purrr::imap_chr(
     # ---------------------------------------------------------------------
 
     show_static =
-      show_static_summary_maps &&
+      make_static_summary_maps &&
       var_nm %in% names(
         summary_map_plots %||% list()
       )
 
     show_interactive =
-      show_interactive_summary_maps &&
+      make_interactive_summary_maps &&
       var_nm %in% names(
         summary_map_leaflet %||% list()
       )

@@ -410,16 +410,17 @@ align_summary_grid = function(
     )
   )
   
-  if (
-    !same_crs ||
-    !same_grid
-  ) {
+  if (!same_crs || !same_grid) {
     
     x = stars::st_warp(
       x,
       dest = reference,
-      use_gdal = TRUE
+      use_gdal = TRUE,
+      no_data_value = -9999
     )
+    
+    stars::st_dimensions(x) = stars::st_dimensions(reference)
+    
   }
   
   x
