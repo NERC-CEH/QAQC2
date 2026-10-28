@@ -1,2 +1,4 @@
 .DS_Store
 /EMEP/R_render_que.sh
+/WRF/R_render_que.sh
+/WRF/GHCN_que.sh
