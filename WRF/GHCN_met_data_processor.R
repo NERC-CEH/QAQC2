@@ -205,9 +205,9 @@ source('/home/tomasliska/QAQC_SOURCE_CODE/utils/utils.R')
 source('/home/tomasliska/QAQC_SOURCE_CODE/utils/GHCN_met_data_process_funcs.R')
 
 platform = runtime_platform()
-
+ 
 Sys.unsetenv(c('PYTHONPATH', 'PYTHONHOME'))
-
+ 
 Sys.setenv(
   PYTHONNOUSERSITE = '1',
   OMP_NUM_THREADS = '1',
@@ -215,32 +215,26 @@ Sys.setenv(
   OPENBLAS_NUM_THREADS = '1',
   HDF5_USE_FILE_LOCKING = 'FALSE'
 )
-
-if (!exists('WRF_QAQC_PYTHON') ||
-    is.null(WRF_QAQC_PYTHON) ||
-    is.na(WRF_QAQC_PYTHON) ||
-    WRF_QAQC_PYTHON == '') {
-  stop(glue::glue('Please set WRF_QAQC_PYTHON in {USER_INPUT_FILE}.'))
+ 
+# Identify Python from the active environment.
+ghcnh_python = unname(Sys.which('python'))
+ 
+if (!nzchar(ghcnh_python)) {
+  stop("Python executable not found. Please activate the required Conda environment.")
 }
-
-WRF_QAQC_PYTHON = fs::path_expand(WRF_QAQC_PYTHON)
-
-if (!fs::file_exists(WRF_QAQC_PYTHON)) {
-  stop('Python executable does not exist: ', WRF_QAQC_PYTHON)
-}
-
+ 
 Sys.setenv(
-  RETICULATE_PYTHON = WRF_QAQC_PYTHON,
+  RETICULATE_PYTHON = ghcnh_python,
   RETICULATE_PYTHON_FALLBACK = 'FALSE'
 )
-
+ 
 if (platform %in% c('slurm-login', 'slurm-compute')) {
-  
+ 
   qaqc_env_lib = fs::path(
-    fs::path_dir(fs::path_dir(WRF_QAQC_PYTHON)),
+    fs::path_dir(fs::path_dir(ghcnh_python)),
     'lib'
   )
-  
+ 
   Sys.setenv(
     LD_LIBRARY_PATH = paste(
       qaqc_env_lib,
@@ -249,9 +243,9 @@ if (platform %in% c('slurm-login', 'slurm-compute')) {
     )
   )
 }
-
+ 
 reticulate::use_python(
-  WRF_QAQC_PYTHON,
+  ghcnh_python,
   required = TRUE
 )
 
@@ -443,84 +437,86 @@ if (!is.null(WRF_FILE)) {
 
 # MAIN --------------------------------------------------------------------
 
-# Use the innermost WRF domain to identify available GHCNh stations.
-wrf_domain = unname(tail(TEST_DOMAINS, 1))
-
-wrf_files = TEST_DIR %>%
-  fs::dir_ls() %>%
-  stringr::str_subset(
-    stringr::str_c('wrfout_', wrf_domain, '_')
-  ) %>%
-  sort()
-
-if (length(wrf_files) == 0) {
-  stop(
-    glue::glue(
-      "No WRF output files found for domain '{wrf_domain}' in {TEST_DIR}."
-    )
-  )
-}
-
-# Extract the simulation year from the first WRF output file.
-wrf_nc = ncpy$Dataset(wrf_files[[1]])
-
-wrf_times = wrf$extract_times(
-  wrf_nc,
-  timeidx = 0L,
-  meta = FALSE
-)
-
-YEAR = as.integer(
-  format(
-    as.POSIXct(
-      reticulate::py_to_r(wrf_times),
-      tz = 'UTC'
-    ),
-    '%Y'
-  )
-)
-
-logger::log_info('GHCNh processing year: {YEAR}')
-
 met_sites = import_ghcn_stations(database = 'hourly', return = 'sf')
-
-#extract model domain x,y dimension sizes
-sn_dim = wrf_nc$dimensions$south_north$size
-we_dim = wrf_nc$dimensions$west_east$size
-
-lon = intersect(c('longitude', 'lon', 'long', 'lng'), names(met_sites))
-lat = intersect(c('latitude', 'lat'), names(met_sites))
+ 
 code = intersect(c('station_id', 'id', 'code'), names(met_sites))
-met_sites = rename(met_sites, code = !!code)
-
-#extract site indeces and filter out those outside the model domain
-
-met_indeces = wrf$ll_to_xy(wrf_nc, latitude = met_sites[[lat]], longitude = met_sites[[lon]], meta = F)
-met_indeces = as_tibble(met_indeces, .name_repair = ~met_sites$code) %>% 
-  mutate(index = c('i', 'j')) %>% 
-  pivot_longer(-index, names_to = 'code', values_to = 'val') %>%
-  pivot_wider(id_cols = code, names_from = index, values_from = val) %>% 
-  filter(between(i, 0, we_dim - 1),between(j, 0, sn_dim - 1)) # python is 0-start index
-
-met_sites_in = met_sites %>% 
-  filter(code %in% met_indeces$code) %>%
-  left_join(met_indeces, by = 'code')
-
-wrf_nc$close()
-
+met_sites = dplyr::rename(met_sites, code = !!code)
+ 
+# Select stations using either a WRF domain or a geographical region.
+ 
+if (!is.null(WRF_FILE)) {
+ 
+  wrf_nc = ncpy$Dataset(WRF_FILE)
+ 
+  # Extract model domain dimensions.
+  sn_dim = wrf_nc$dimensions$south_north$size
+  we_dim = wrf_nc$dimensions$west_east$size
+ 
+  lon = intersect(c('longitude', 'lon', 'long', 'lng'), names(met_sites))
+  lat = intersect(c('latitude', 'lat'), names(met_sites))
+ 
+  # Extract station grid indices.
+  met_indices = wrf$ll_to_xy(
+    wrf_nc,
+    latitude = met_sites[[lat]],
+    longitude = met_sites[[lon]],
+    meta = FALSE
+  )
+ 
+  met_indices = tibble::as_tibble(
+    met_indices,
+    .name_repair = ~met_sites$code
+  ) %>%
+    dplyr::mutate(index = c('i', 'j')) %>%
+    tidyr::pivot_longer(
+      -index,
+      names_to = 'code',
+      values_to = 'val'
+    ) %>%
+    tidyr::pivot_wider(
+      id_cols = code,
+      names_from = index,
+      values_from = val
+    ) %>%
+    dplyr::filter(
+      dplyr::between(i, 0, we_dim - 1),
+      dplyr::between(j, 0, sn_dim - 1)
+    )
+ 
+  met_sites_in = met_sites %>%
+    dplyr::filter(code %in% met_indices$code)
+ 
+  wrf_nc$close()
+ 
+} else {
+ 
+  # Select stations within the supplied geographical region.
+  met_sites_in = met_sites %>%
+    sf::st_transform(sf::st_crs(region)) %>%
+    sf::st_filter(region, .predicate = sf::st_intersects) %>%
+    sf::st_transform(sf::st_crs(met_sites))
+ 
+}
+ 
+logger::log_info(
+  'Selected {nrow(met_sites_in)} GHCNh stations for {YEAR}.'
+)
+ 
+# Construct output paths for selected stations.
+ 
 met_sites_in = met_sites_in %>%
   dplyr::mutate(
     station_name_file = sanitise_string(
-      .data[['name']],
+      name,
       case = 'title',
-      separator = '_'
+      separator = '*'
     ),
     output_pth = fs::path(
       OBS_REPO,
       'Data',
       paste0(
         station_name_file,
-        '_',
+        '*',
         code,
         '_',
         YEAR,
