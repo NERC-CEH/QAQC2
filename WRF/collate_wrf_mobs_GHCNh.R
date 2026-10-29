@@ -110,7 +110,11 @@ logger::log_info('Workers: {collate_workers}')
 mobs_domain = unname(tail(TEST_DOMAINS, 1))
 
 wrf_files = TEST_DIR %>%
-  fs::dir_ls(regexp = stringr::str_c('^wrfout_', mobs_domain, '_')) %>%
+  fs::dir_ls() %>%
+  purrr::keep(~stringr::str_detect(
+    fs::path_file(.x),
+    stringr::str_c('^wrfout_', mobs_domain, '_')
+  )) %>%
   sort()
 
 if (length(wrf_files) == 0) {
