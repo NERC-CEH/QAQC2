@@ -1500,8 +1500,14 @@ def validate_configuration():
     if WRFOUT_DIR is None or str(WRFOUT_DIR).strip() == "":
         raise ValueError("WRFOUT_DIR is empty.")
 
-    if DOMAIN_TAG is None or str(DOMAIN_TAG).strip() == "":
-        raise ValueError("DOMAIN_TAG is empty.")
+    if not DOMAIN_TAGS:
+        raise ValueError("DOMAIN_TAGS is empty.")
+    
+    if any(
+        domain is None or not str(domain).strip()
+        for domain in DOMAIN_TAGS
+    ):
+        raise ValueError("DOMAIN_TAGS contains an empty domain identifier.")
 
     if not WRF_SUMMARY_VARS:
         raise ValueError("WRF_SUMMARY_VARS is empty.")
