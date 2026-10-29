@@ -44,14 +44,11 @@ if (!platform %in% c('slurm-compute', 'slurm-login')) {
   )
 }
 
-if (!exists('WRF_QAQC_PYTHON') || is.na(WRF_QAQC_PYTHON) || WRF_QAQC_PYTHON == '') {
-  stop(glue::glue('Please set WRF_QAQC_PYTHON in {USER_INPUT_FILE}.'))
-}
+# Use Python from the active Conda environment.
+wrf_qaqc_python = unname(Sys.which('python'))
 
-WRF_QAQC_PYTHON = fs::path_expand(WRF_QAQC_PYTHON)
-
-if (!fs::file_exists(WRF_QAQC_PYTHON)) {
-  stop('Python executable does not exist: ', WRF_QAQC_PYTHON)
+if (!nzchar(wrf_qaqc_python) || !fs::file_exists(wrf_qaqc_python)) {
+  stop('Python executable not found in the active environment.')
 }
 
 Sys.unsetenv('PYTHONPATH')
@@ -59,7 +56,7 @@ Sys.unsetenv('PYTHONHOME')
 
 Sys.setenv(
   PYTHONNOUSERSITE = '1',
-  RETICULATE_PYTHON = WRF_QAQC_PYTHON,
+  RETICULATE_PYTHON = wrf_qaqc_python,
   RETICULATE_PYTHON_FALLBACK = 'FALSE',
   OMP_NUM_THREADS = '1',
   MKL_NUM_THREADS = '1',
@@ -68,7 +65,7 @@ Sys.setenv(
 )
 
 qaqc_env_lib = fs::path(
-  fs::path_dir(fs::path_dir(WRF_QAQC_PYTHON)),
+  fs::path_dir(fs::path_dir(wrf_qaqc_python)),
   'lib'
 )
 
@@ -80,7 +77,7 @@ Sys.setenv(
   )
 )
 
-reticulate::use_python(WRF_QAQC_PYTHON, required = TRUE)
+reticulate::use_python(wrf_qaqc_python, required = TRUE)
 
 workers = dplyr::case_when(
   platform == 'slurm-compute' ~ parallelly::availableCores(),
@@ -104,7 +101,7 @@ if (any(sapply(list(wrf, ncpy, np), is.null))) {
 
 logger::log_info('Starting WRF MOBS collation')
 logger::log_info('Platform: {platform}')
-logger::log_info('Python: {WRF_QAQC_PYTHON}')
+logger::log_info('Python: {wrf_qaqc_python}')
 logger::log_info('Workers: {collate_workers}')
 
 # INPUT FILES -------------------------------------------------------------

@@ -37,16 +37,6 @@ REF_CRS = MODEL_CRS_STEREO
 
 WRF_VAR_PARAMS_FILE = NULL
 
-
-# Python environment -------------------------------------------------------
-
-# Python environment used for WRF extraction and summary calculations.
-# Not required when generating the QAQC report from existing outputs.
-# tomasliska: '~/miniforge3/envs/qaqc_2026a/bin/python'
-
-WRF_QAQC_PYTHON = NULL
-
-
 # NCL palettes -------------------------------------------------------------
 
 # Directory containing NCL .rgb palette files.
