@@ -105,6 +105,10 @@ SAVE_STATIC_OUTPUTS = FALSE
 
 PRINT_WRF_SETTINGS = TRUE
 
+# Generate WRF summary NetCDF files before rendering the QAQC report.
+# If FALSE, existing summaries are read from TEST_WRF_SUMMARY_DIR.
+GENERATE_WRF_SUMMARIES = FALSE
+
 COMPARE_SUMMARIES = FALSE # not yet implemented, keep FALSE
 
 PLOT_STATIC_SUMMARY_MAPS = TRUE
@@ -127,24 +131,7 @@ SHOW_QAQC_RUN_INFO = FALSE
 # TASK-SPECIFIC INPUTS
 # ==========================================================================
 
-# WRF VARIABLE EXTRACTION --------------------------------------------------
-
-# WRF variables extracted when collating model-observation datasets.
-# RAINNC and RAINC are required for precipitation calculations.
-
-WRF_EXTRACT_VARS = c(
-  'T2',
-  'td2',
-  'rh2',
-  'PSFC',
-  'ws',
-  'wd',
-  'RAINNC',
-  'RAINC'
-)
-
-
-# WRF SUMMARY GENERATION ---------------------------------------------------
+# GENERATE_WRF_SUMMARIES ---------------------------------------------------
 
 # Variables for which WRF summary NetCDF files should be calculated.
 # Used by summarise_wrf.py / wrf_summary_calc_py.sh.
@@ -163,7 +150,7 @@ WRF_SUMMARY_VARS = c(
 
 WRF_SUMMARY_STATS = c('mean')
 
-# the functionality below is WIP
+# the functionality below is WIP 
 # # SUMMARY COMPARISON -------------------------------------------------------
 # 
 # # Variables to compare.
@@ -176,8 +163,14 @@ WRF_SUMMARY_STATS = c('mean')
 # 
 # SUMMARY_DIFF_THRESHOLD = 5
 
-
 # SUMMARY MAPS -------------------------------------------------------------
+# Directories containing WRF summary NetCDF files.
+# 'default' uses 'QAQC_DIR/Data/WRF_summaries'.
+# Set REF_WRF_SUMMARY_DIR when comparing against a reference run.
+
+TEST_WRF_SUMMARY_DIR = 'default'
+REF_WRF_SUMMARY_DIR = NULL
+
 
 # Variables to map.
 # Use 'all' for all supported variables and prefix variable names
@@ -189,11 +182,11 @@ SUMMARY_MAP_VARS = 'all'
 # These must be a subset of SUMMARY_MAP_VARS.
 
 SUMMARY_MAP_VARS_REPORT = c(
-  # 'T2',
-  # 'td2',
-  # 'rh2',
-  # 'PSFC',
-  # 'ws',
+  'T2',
+  'td2',
+  'rh2',
+  'PSFC',
+  'ws',
   'precip'
 )
 
@@ -330,6 +323,20 @@ INTERACTIVE_SUMMARY_MAP_LEGEND = TRUE
 # This is determined automatically from TEST_DOMAINS.
 
 # MOBS COLLATION ----------------------------------------------------------
+
+# WRF variables extracted when collating model-observation datasets.
+# RAINNC and RAINC are required for precipitation calculations.
+
+WRF_EXTRACT_VARS = c(
+  'T2',
+  'td2',
+  'rh2',
+  'PSFC',
+  'ws',
+  'wd',
+  'RAINNC',
+  'RAINC'
+)
 
 # For stations whose nearest WRF grid cell is water (XLAND = 2),
 # extract meteorological data from the nearest land cell instead.
@@ -606,14 +613,8 @@ data_pth_out = fs::dir_create(fs::path(qaqc_pth_out, 'Data'))
 
 # WRF summary directories --------------------------------------------------
 
-test_summary_dir = fs::dir_create(
-  fs::path(data_pth_out, 'WRF_summaries')
-)
-
-ref_summary_dir = if (!is.null(REF_QAQC_DIR)) {
-  fs::path(REF_QAQC_DIR, 'Data', 'WRF_summaries')
-} else {
-  NULL
+if (identical(TEST_WRF_SUMMARY_DIR, 'default')) {
+  TEST_WRF_SUMMARY_DIR = fs::path(data_pth_out, 'WRF_summaries')
 }
 
 # Logger.

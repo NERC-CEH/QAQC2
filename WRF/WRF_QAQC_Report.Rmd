@@ -1,0 +1,5997 @@
+---
+title: "WRF QAQC Report"
+subtitle: "Author: `r params$qaqc_user`"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M')`"
+params:
+  qaqc_user: "Tomas Liska"	
+output:
+  rmdformats::readthedown:
+    toc_depth: 3
+fig_width: 10
+---
+  
+```{r setup, include=FALSE}
+required_packages = c(
+  "knitr", "tidyverse", "fs", "parallelly", "glue",
+  "ncdf4", "sf", "stars", "worldmet", "openair",
+  "furrr", "future", "checkmate", "rvest", "gridExtra",
+  "grid", "gt", "ggpubr", "textclean", "leaflet",
+  "leaflet.providers", "leafem", "htmltools", "logger",
+  "plotly", "DT"
+)
+
+missing_packages = required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  stop(
+    "Missing required R packages: ",
+    paste(missing_packages, collapse = ", "),
+    "\nPlease install these packages before running the QAQC."
+  )
+}
+
+invisible(
+  lapply(required_packages, library, character.only = TRUE)
+)
+
+USER_INPUT_FILE = Sys.getenv("WRF_QAQC_USER_INPUT")
+
+if (USER_INPUT_FILE == "") {
+  # For local/laptop runs, set the user input file manually here.
+  USER_INPUT_FILE = "~/Desktop/Work/EMEP_QAQC/QAQC2_development/WRF/user_input_files/wrf_qaqc_user_input.R"
+}
+
+if (!fs::file_exists(USER_INPUT_FILE)) {
+  stop(
+    glue::glue("User input file not found: {USER_INPUT_FILE}")
+  )
+}
+
+USER_INPUT_FILE = fs::path_abs(USER_INPUT_FILE)
+
+source(USER_INPUT_FILE)
+
+# BASIC VALIDATION ---------------------------------------------------------
+
+check_input_dir = function(dir, input_name) {
+  if (!is.null(dir) && !fs::dir_exists(dir)) {
+    stop(
+      glue::glue("{input_name} does not exist: {dir}"),
+      call. = FALSE
+    )
+  }
+}
+
+# TEST_DIR must be specified, although it may not be accessible
+# when working with previously processed QAQC outputs.
+
+# if (
+#   !is.character(TEST_DIR) ||
+#   length(TEST_DIR) != 1 ||
+#   is.na(TEST_DIR) ||
+#   !nzchar(TEST_DIR)
+# ) {
+#   stop(
+#     'TEST_DIR must be a non-empty directory path.',
+#     call. = FALSE
+#   )
+# }
+
+# At least one WRF domain must be specified.
+
+if (
+  !is.character(TEST_DOMAINS) ||
+  length(TEST_DOMAINS) == 0 ||
+  is.null(names(TEST_DOMAINS)) ||
+  anyNA(names(TEST_DOMAINS)) ||
+  any(!nzchar(names(TEST_DOMAINS))) ||
+  anyDuplicated(names(TEST_DOMAINS)) ||
+  anyNA(TEST_DOMAINS) ||
+  any(!grepl('^d[0-9]{2}$', TEST_DOMAINS)) ||
+  anyDuplicated(TEST_DOMAINS)
+) {
+  stop(
+    'TEST_DOMAINS must be a named vector with unique domain names and identifiers.',
+    call. = FALSE
+  )
+}
+
+# Domains must be ordered from outermost to innermost.
+
+if (!identical(TEST_DOMAINS, sort(TEST_DOMAINS))) {
+  stop(
+    'TEST_DOMAINS must be ordered from outermost to innermost.',
+    call. = FALSE
+  )
+}
+
+# Reference directories are optional.
+
+check_input_dir(REF_QAQC_DIR, 'REF_QAQC_DIR')
+
+# Load WRF variable parameters --------------------------------------------
+
+if (!fs::file_exists(WRF_VAR_PARAMS_FILE)) {
+  stop(
+    glue::glue(
+      "WRF variable parameters file not found: {WRF_VAR_PARAMS_FILE}"
+    )
+  )
+}
+
+source(WRF_VAR_PARAMS_FILE)
+
+if (!exists('WRF_VAR_PARAMS_LIST')) {
+  stop(
+    'WRF_VAR_PARAMS_LIST is not defined. ',
+    'Please check the WRF variable parameters file.'
+  )
+}
+
+# mac paths
+source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/utils.R'))
+source('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/myquicktext.R')
+source('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/wrf_setting_lookup.R')
+source('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/emep_qaqc_funcs.R')
+
+# source(fs::path('../utils/myquicktext.R'))
+# source(fs::path('../utils/utils.R'))
+# source(fs::path('../utils/emep_qaqc_funcs.R'))
+
+platform = runtime_platform() # in utils.R
+
+worker_cap = dplyr::case_when(
+  platform == 'slurm-compute' ~ parallelly::availableCores(),
+  platform == 'slurm-login' ~ min(2, parallelly::availableCores()),
+  platform %in% c('mac', 'windows') ~ min(4, parallelly::availableCores()),
+  TRUE ~ NA_integer_
+)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = 'center'
+)
+
+knitr::knit_engines$set(
+  asis = function(options) {
+    if (options$echo && options$eval) knitr::knit_child(text = options$code)
+  }
+)
+
+# if (requireNamespace('ragg', quietly = TRUE)) {
+#   knitr::opts_chunk$set(dev = 'ragg_png')
+# }
+
+MODSTATS_STATS_LOOKUP = c(
+  n = 'n',
+  FAC2 = 'FAC2',
+  MB = 'MB',
+  NMB = 'NMB (%)',
+  RMSE = 'RMSE',
+  r_pearson = 'Pearson r',
+  r_spearman = 'Spearman ρ',
+  p = 'p',
+  P = 'P'
+)
+
+test_label = RUN_LABELS[1]
+ref_label = RUN_LABELS[2]
+
+# helpers for task combinations
+
+make_interactive_summary_maps =
+  REPORT_STYLE == 'interactive' &&
+  PLOT_INTERACTIVE_SUMMARY_MAPS
+
+make_static_summary_maps =
+  PLOT_STATIC_SUMMARY_MAPS ||
+  (
+    PLOT_INTERACTIVE_SUMMARY_MAPS &&
+    SAVE_STATIC_OUTPUTS
+  )
+
+make_summary_maps =
+  make_static_summary_maps ||
+  make_interactive_summary_maps
+
+EVALUATE_MOBS = isTRUE(PRINT_MODSTATS_TABLES) ||
+  isTRUE(SAVE_STATIC_OUTPUTS) ||
+  isTRUE(PLOT_MOBS_SCATTER_PLOTS) ||
+  isTRUE(SAVE_STATIC_OUTPUTS) ||
+  isTRUE(PLOT_MOBS_MODSTAT_MAPS)
+
+NEED_MOBS = isTRUE(EVALUATE_MOBS) ||
+  isTRUE(PLOT_MOBS_TSERIES) ||
+  isTRUE(SAVE_STATIC_OUTPUTS)
+
+```
+
+```{css, echo=FALSE}
+.file-path {
+  font-family: inherit;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+```
+
+```{r select_wrf_files, include=F}
+wrf_run_settings = NULL
+
+if (isTRUE(PRINT_WRF_SETTINGS)) {
+
+  if (!fs::dir_exists(TEST_DIR)) {
+    warning(
+      glue::glue(
+        "Cannot print WRF settings because TEST_DIR is inaccessible: {TEST_DIR}"
+      )
+    )
+  } else {
+
+    wrf_files = fs::dir_ls(TEST_DIR) %>%
+      stringr::str_subset(
+        stringr::str_c('wrfout_', tail(TEST_DOMAINS, 1), '_')
+      ) %>%
+      sort()
+
+    if (length(wrf_files) == 0) {
+      warning('No WRF output files found for the innermost Test domain.')
+    } else {
+
+      first_file = wrf_files[[1]]
+      last_file = wrf_files[[length(wrf_files)]]
+
+      first_time = read_wrf_times(first_file)[[1]]
+      last_time = read_wrf_times(last_file) %>% tail(1)
+
+      wrf_run_settings = summarise_wrf_run_settings(
+        first_file = first_file,
+        last_file = last_file
+      )
+    }
+  }
+}
+
+# move the following to the appropriate chunk
+
+# domain_crop_sf = as_domain_polygon_sf(
+#   DOMAIN_CROP,
+#   filter_name = 'domain crop'
+# )
+# 
+# domain_mask_sf = as_domain_polygon_sf(
+#   DOMAIN_MASK,
+#   filter_name = 'domain mask'
+# )
+# 
+# interactive_summary_map_crop_sf = as_domain_polygon_sf(
+#   INTERACTIVE_SUMMARY_MAP_CROP,
+#   filter_name = 'interactive summary map crop'
+# )
+# 
+# interactive_summary_map_mask_sf = as_domain_polygon_sf(
+#   INTERACTIVE_SUMMARY_MAP_MASK,
+#   filter_name = 'interactive summary map mask'
+# )
+```
+
+```{r}
+# RUN INFORMATION ----------------------------------------------------------
+
+ref_submitted = !is.null(REF_DIR)
+ref_qaqc_submitted = !is.null(REF_QAQC_DIR)
+
+# Extract the simulation period from the original WRF files, if available.
+
+get_wrf_run_period = function(wrf_dir, domain) {
+
+  if (is.null(wrf_dir)) {
+    return(c(start = 'Not submitted', end = 'Not submitted'))
+  }
+
+  if (!fs::dir_exists(wrf_dir)) {
+    return(c(start = 'Not accessible', end = 'Not accessible'))
+  }
+
+  wrf_files = fs::dir_ls(
+    wrf_dir,
+    regexp = paste0('wrfout_', domain, '_')
+  ) %>%
+    sort()
+
+  if (length(wrf_files) == 0) {
+    return(c(start = 'No WRF files', end = 'No WRF files'))
+  }
+
+  first_time = read_wrf_times(wrf_files[[1]])[[1]]
+  last_time = read_wrf_times(tail(wrf_files, 1)[[1]]) %>%
+    tail(1)
+
+  c(
+    start = format(first_time, '%Y-%m-%d %H:%M'),
+    end = format(last_time, '%Y-%m-%d %H:%M')
+  )
+}
+
+# Use the first submitted domain to determine the simulation period.
+
+run_domain = unname(TEST_DOMAINS[[1]])
+
+test_period = get_wrf_run_period(TEST_DIR, run_domain)
+ref_period = get_wrf_run_period(REF_DIR, run_domain)
+
+# Prepare domain information.
+
+domain_parameters = paste(names(TEST_DOMAINS), 'domain')
+
+test_domain_names = unname(TEST_DOMAINS)
+
+ref_domain_names = if (is.null(REF_DIR)) {
+  rep('Not submitted', length(TEST_DOMAINS))
+} else {
+  unname(TEST_DOMAINS)
+}
+
+test_period = get_wrf_run_period(TEST_DIR, run_domain)
+ref_period = get_wrf_run_period(REF_DIR, run_domain)
+
+# Run Info table.
+
+run_info_table = tibble::tibble(
+  Parameter = c(
+    'WRF run directory',
+    'QAQC data directory',
+    domain_parameters,
+    'Start time',
+    'End time'
+  ),
+  test = c(
+    if (is.null(TEST_DIR)) 'Not submitted' else TEST_DIR,
+    qaqc_pth_out,
+    test_domain_names,
+    test_period[['start']],
+    test_period[['end']]
+  ),
+  ref = c(
+    if (ref_submitted) REF_DIR else 'Not submitted',
+    if (ref_qaqc_submitted) REF_QAQC_DIR else 'Not submitted',
+    ref_domain_names,
+    ref_period[['start']],
+    ref_period[['end']]
+  )
+)
+```
+
+# Run Info
+
+```{r}
+
+# Determine the temporal overlap between Test and Reference runs.
+
+testref_start_date = NULL
+testref_end_date = NULL
+testref_period_overlap = FALSE
+
+if (
+  !is.null(REF_DIR) &&
+  !is.na(as.POSIXct(test_period['start'], format = '%Y-%m-%d %H:%M', tz = 'UTC')) &&
+  !is.na(as.POSIXct(ref_period['start'], format = '%Y-%m-%d %H:%M', tz = 'UTC'))
+) {
+
+  testref_start_date = max(
+    as.POSIXct(test_period['start'], format = '%Y-%m-%d %H:%M', tz = 'UTC'),
+    as.POSIXct(ref_period['start'], format = '%Y-%m-%d %H:%M', tz = 'UTC')
+  )
+
+  testref_end_date = min(
+    as.POSIXct(test_period['end'], format = '%Y-%m-%d %H:%M', tz = 'UTC'),
+    as.POSIXct(ref_period['end'], format = '%Y-%m-%d %H:%M', tz = 'UTC')
+  )
+
+  testref_period_overlap = testref_start_date < testref_end_date
+
+  if (!testref_period_overlap) {
+    testref_start_date = NULL
+    testref_end_date = NULL
+  }
+}
+
+run_info_table %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(test, ref),
+      ~ ifelse(
+        Parameter %in% c('WRF run directory', 'QAQC data directory'),
+        stringr::str_replace_all(.x, '/', '/<wbr>'),
+        .x
+      )
+    )
+  ) %>%
+  gt::gt() %>%
+  gt::fmt_markdown(
+    columns = c(test, ref),
+    rows = Parameter %in% c('WRF run directory', 'QAQC data directory')
+  ) %>%
+  gt::cols_label(
+    test = RUN_LABELS[[1]],
+    ref = RUN_LABELS[[2]]
+  ) %>%
+  gt::cols_width(
+    Parameter ~ gt::px(140),
+    test ~ gt::px(320),
+    ref ~ gt::px(320)
+  ) %>%
+  gt::tab_style(
+    style = gt::css(
+      `white-space` = 'normal',
+      `overflow-wrap` = 'normal',
+      `word-break` = 'normal'
+    ),
+    locations = gt::cells_body(
+      columns = c(test, ref),
+      rows = Parameter %in% c('WRF run directory', 'QAQC data directory')
+    )
+  )
+```
+
+```{r print_qaqc_dir, results='asis'}
+cat(
+  glue::glue(
+    "**QAQC output in:**\n\n",
+    "<div class='file-path'>",
+    "{format_file_path(qaqc_pth_out)}",
+    "</div><br><br>\n\n"
+  )
+)
+```
+
+```{r variable-lookup-table, echo = FALSE, results = 'asis'}
+
+lookup_vars = unique(c(
+  SUMMARY_MAP_VARS %||% character(),
+  MOBS_TSERIES_VARS %||% character(),
+  MOBS_EVAL_VARS %||% character()
+)) %>%
+  purrr::discard(~ is.na(.x) || .x == 'all') %>%
+  purrr::map_chr(
+    resolve_var_id,
+    var_params_list = WRF_VAR_PARAMS_LIST
+  ) %>%
+  unique()
+
+var_lookup_tbl = tibble::tibble(
+  Variable = purrr::map_chr(
+    lookup_vars,
+    ~ get_var_param(
+      var = .x,
+      key = 'description',
+      var_params_list = WRF_VAR_PARAMS_LIST,
+      default = .x
+    )
+  ),
+
+  Unit = purrr::map_chr(
+    lookup_vars,
+    ~ format_units_for_html(
+      get_var_param(
+        var = .x,
+        key = 'units',
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        default = ''
+      )
+    )
+  ),
+
+  Label = purrr::map_chr(
+    lookup_vars,
+    ~ format_var_label(
+      var = .x,
+      var_params_list = WRF_VAR_PARAMS_LIST,
+      context = 'maps',
+      output = 'html',
+      include_units = FALSE
+    )
+  )
+)
+
+var_lookup_intro = if (nrow(var_lookup_tbl) == 1) {
+  'The following variable is analysed in this report:'
+} else {
+  'The following variables are analysed in this report:'
+}
+
+cat('\n', var_lookup_intro, '\n\n', sep = '')
+
+var_lookup_tbl %>%
+  gt::gt() %>%
+  gt::fmt_markdown(
+    columns = c(Variable, Unit, Label)
+  ) %>%
+  gt::cols_align(
+    align = 'left',
+    columns = c(Variable, Unit, Label)
+  ) %>%
+  gt::cols_width(
+    Variable ~ gt::px(400),
+    Unit ~ gt::px(140),
+    Label ~ gt::px(240)
+  ) %>%
+  gt::tab_options(
+    table.width = gt::px(780)
+  )
+```
+
+```{r create-summary-map-data, eval = make_summary_maps, include=FALSE}
+
+task_start = Sys.time()
+
+summary_map_data = NULL
+summary_map_plots = NULL
+summary_map_grobs = NULL
+summary_map_leaflet = NULL
+summary_map_vars_report = NULL
+report_map_height = NULL
+
+if (isTRUE(make_summary_maps)) {
+
+  # Prepare optional spatial filters.
+
+  domain_crop_sf = as_domain_polygon_sf(
+    SUMMARY_MAP_DOMAIN_CROP,
+    filter_name = 'domain crop'
+  )
+
+  domain_mask_sf = as_domain_polygon_sf(
+    SUMMARY_MAP_DOMAIN_MASK,
+    filter_name = 'domain mask'
+  )
+
+  # Identify available Test summary variables for each requested domain,
+  # accounting for the requested statistic and date tag.
+
+  if (!fs::dir_exists(TEST_WRF_SUMMARY_DIR)) {
+    stop(glue::glue(
+      "Test WRF summary directory does not exist: {TEST_WRF_SUMMARY_DIR}"
+    ))
+  }
+  
+  if (!is.null(REF_WRF_SUMMARY_DIR) &&
+    !fs::dir_exists(REF_WRF_SUMMARY_DIR)) {
+    stop(glue::glue(
+      "Reference WRF summary directory does not exist: {REF_WRF_SUMMARY_DIR}"
+    ))
+  }
+  
+  test_summary_files = fs::dir_ls(
+    TEST_WRF_SUMMARY_DIR,
+    regexp = '\\.nc$'
+  )
+
+  available_test_vars = TEST_DOMAINS %>%
+    purrr::set_names(names(TEST_DOMAINS)) %>%
+    purrr::map(function(domain) {
+
+      file_names = fs::path_file(test_summary_files)
+
+      file_info = stringr::str_match(
+        file_names,
+        paste0(
+          '^', domain,
+          '_(.+?)_(mean|median|min|max|sd|sum|accum)_(.+)\\.nc$'
+        )
+      )
+
+      available = tibble::tibble(
+        variable = file_info[, 2],
+        stat = file_info[, 3],
+        date_tag = file_info[, 4]
+      ) %>%
+        dplyr::filter(!is.na(variable)) %>%
+        dplyr::filter(
+          (variable == 'precip' & stat == 'accum') |
+            (variable != 'precip' & stat == SUMMARY_MAP_TEST_STAT)
+        )
+
+      if (!is.null(SUMMARY_MAP_TEST_DATE_TAG)) {
+        available = available %>%
+          dplyr::filter(
+            stringr::str_detect(
+              date_tag,
+              stringr::fixed(SUMMARY_MAP_TEST_DATE_TAG)
+            )
+          )
+      }
+
+      unique(available$variable)
+    })
+  
+  # Resolve requested variables.
+
+  if (identical(SUMMARY_MAP_VARS, 'all')) {
+  
+    summary_map_vars = available_test_vars %>%
+      unlist(use.names = FALSE) %>%
+      unique()
+  
+  } else {
+  
+    summary_map_vars = SUMMARY_MAP_VARS
+  
+  }
+  
+  if (length(summary_map_vars) == 0) {
+    stop(
+      'No Test summary-map variables are available for plotting.',
+      call. = FALSE
+    )
+  }
+  
+  if (!identical(SUMMARY_MAP_VARS, 'all')) {
+
+    missing_test_vars = available_test_vars %>%
+      purrr::imap(function(vars, domain_name) {
+        missing = setdiff(summary_map_vars, vars)
+  
+        if (length(missing) == 0) {
+          return(NULL)
+        }
+  
+        tibble::tibble(
+          domain = domain_name,
+          variable = missing
+        )
+      }) %>%
+      dplyr::bind_rows()
+  
+    if (nrow(missing_test_vars) > 0) {
+      stop(
+        'Missing Test summaries for explicitly requested variables:\n',
+        paste(
+          paste0(
+            missing_test_vars$domain,
+            ': ',
+            missing_test_vars$variable
+          ),
+          collapse = '\n'
+        ),
+        call. = FALSE
+      )
+    }
+  
+  }
+  
+  # Resolve the subset displayed in the HTML report.
+
+  summary_map_vars_report = resolve_selection(
+    selection = SUMMARY_MAP_VARS_REPORT,
+    available = summary_map_vars,
+    input_name = 'SUMMARY_MAP_VARS_REPORT'
+  )
+
+  # Build Test / Reference / difference data for every requested variable
+  # and domain.
+
+  summary_map_data = summary_map_vars %>%
+    purrr::set_names() %>%
+    purrr::map(function(v) {
+
+      domain_data = TEST_DOMAINS %>%
+        purrr::imap(function(domain, domain_name) {
+          
+          # Skip unavailable Test summaries when 'all' is requested.
+          if (identical(SUMMARY_MAP_VARS, 'all') &&
+              !v %in% available_test_vars[[domain_name]]) {
+            return(NULL)
+          }
+
+          # Precipitation summaries use accumulated totals.
+
+          test_stat = if (v == 'precip') {
+            'accum'
+          } else {
+            SUMMARY_MAP_TEST_STAT
+          }
+
+          ref_stat = if (v == 'precip') {
+            'accum'
+          } else {
+            SUMMARY_MAP_REF_STAT
+          }
+
+          # Select Test summary file.
+
+          this_test_file = select_wrf_summary_file(
+            summary_dir = TEST_WRF_SUMMARY_DIR,
+            domain = domain,
+            var = v,
+            stat = test_stat,
+            date_tag = SUMMARY_MAP_TEST_DATE_TAG
+          )
+
+          # Select Reference summary file, if available.
+
+          this_ref_file = if (!is.null(REF_WRF_SUMMARY_DIR)) {
+            select_wrf_summary_file(
+              summary_dir = REF_WRF_SUMMARY_DIR,
+              domain = domain,
+              var = v,
+              stat = ref_stat,
+              date_tag = SUMMARY_MAP_REF_DATE_TAG
+            )
+          } else {
+            NULL
+          }
+
+          this_ref_crs = if (exists('REF_CRS') && !is.null(REF_CRS)) {
+            REF_CRS
+          } else {
+            TEST_CRS
+          }
+
+          # Calculate Test / Reference / difference data.
+
+          this_diff = calculate_wrf_summary_diff_pair(
+            wrf_var = v,
+            test_fname = this_test_file,
+            ref_fname = this_ref_file,
+            test_crs = TEST_CRS,
+            ref_crs = this_ref_crs,
+            run_labels = RUN_LABELS,
+            diff_direction = DIFF_DIRECTION
+          )
+
+          # Apply optional spatial filters.
+
+          this_diff = apply_domain_filters_stars(
+            x = this_diff,
+            domain_crop = domain_crop_sf,
+            domain_mask = domain_mask_sf
+          )
+
+          this_diff
+        })
+
+      # Remove relative differences where they are not meaningful.
+
+      plot_reldiff = get_var_param(
+        var = v,
+        key = c('maps', 'plot_reldiff'),
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        default = TRUE
+      )
+
+      if (!isTRUE(plot_reldiff)) {
+        domain_data = domain_data %>%
+          purrr::map(function(this_diff) {
+      
+            if (is.null(this_diff)) {
+              return(NULL)
+            }
+      
+            this_diff$rel_diff = NULL
+            this_diff
+          })
+      }
+
+      domain_data
+    })
+}
+```
+
+```{r summary_maps_user_text, eval = make_summary_maps, results='asis'}
+
+cat('\n# Summary Maps\n\n')
+
+# Describe the summary statistics.
+
+summary_map_test_stat_text = format_summary_stat_plural(
+  SUMMARY_MAP_TEST_STAT
+)
+
+summary_map_ref_stat_text = format_summary_stat_plural(
+  SUMMARY_MAP_REF_STAT
+)
+
+if (
+  !is.null(REF_WRF_SUMMARY_DIR) &&
+  SUMMARY_MAP_TEST_STAT != SUMMARY_MAP_REF_STAT
+) {
+
+  summary_map_stat_text = paste(
+    summary_map_test_stat_text,
+    'for the Test run and',
+    summary_map_ref_stat_text,
+    'for the Reference run'
+  )
+
+} else {
+
+  summary_map_stat_text = summary_map_test_stat_text
+
+}
+
+cat(
+  paste(
+    'Summary maps showing modelled',
+    summary_map_stat_text,
+    'have been generated for the selected variables.'
+  )
+)
+
+cat('\n\n')
+
+if ('precip' %in% summary_map_vars) {
+  cat(
+    'Precipitation maps show accumulated precipitation over the summary period.\n\n'
+  )
+}
+
+# Describe optional spatial filtering.
+
+if (
+  !is.null(SUMMARY_MAP_DOMAIN_CROP) ||
+  !is.null(SUMMARY_MAP_DOMAIN_MASK)
+) {
+
+  spatial_filter_text = character(0)
+
+  if (!is.null(SUMMARY_MAP_DOMAIN_CROP)) {
+    spatial_filter_text = c(
+      spatial_filter_text,
+      'cropped to the bounding box of the spatial data supplied in SUMMARY_MAP_DOMAIN_CROP'
+    )
+  }
+
+  if (!is.null(SUMMARY_MAP_DOMAIN_MASK)) {
+    spatial_filter_text = c(
+      spatial_filter_text,
+      'masked to the polygon geometry supplied in SUMMARY_MAP_DOMAIN_MASK'
+    )
+  }
+
+  cat(
+    paste0(
+      'The displayed map data have been ',
+      paste(spatial_filter_text, collapse = ' and '),
+      '.'
+    )
+  )
+
+  cat('\n\n')
+}
+
+# Describe Reference comparisons.
+
+if (!is.null(REF_WRF_SUMMARY_DIR)) {
+
+  cat(
+    paste(
+      'Where corresponding Reference summaries are available,',
+      'the maps also show the absolute and relative differences',
+      'between the Test and Reference runs.'
+    )
+  )
+
+  cat('\n\n')
+}
+
+# Describe interactive maps.
+
+if (make_interactive_summary_maps) {
+
+  cat(
+    paste(
+      'Interactive maps are projected from the original WRF',
+      'coordinate system to EPSG:3857 using nearest-neighbour resampling.'
+    )
+  )
+
+  cat('\n\n')
+}
+
+# List mapped variables.
+
+cat(
+  paste(
+    'Maps are shown below for the following selected variables:',
+    format_elements_to_print(sort(summary_map_vars)),
+    '.'
+  )
+)
+
+cat('\n\n')
+
+```
+
+```{r create-static-summary-maps, include=FALSE, eval=make_static_summary_maps}
+
+# Format summary statistics for map titles.
+
+summary_map_test_stat_title = format_summary_stat(
+  SUMMARY_MAP_TEST_STAT
+)
+
+summary_map_ref_stat_title = format_summary_stat(
+  SUMMARY_MAP_REF_STAT
+)
+
+# Load geographical features.
+
+map_geo_features = load_map_geo_features(MAPPING_GEO_LIST)
+
+# Create static maps for each variable and domain.
+
+summary_map_plots = summary_map_data %>%
+  purrr::imap(function(this_var_diff, v) {
+
+    this_var_diff %>%
+      purrr::imap(function(domain_diff, domain) {
+
+        if (is.null(domain_diff)) {
+          return(NULL)
+        }
+
+        has_ref = RUN_LABELS[[2]] %in% names(domain_diff)
+
+        n_plot_cols = if (has_ref) 2 else 1
+
+        this_cbar_width = get_summary_map_cbar_width(
+          n_plot_cols = n_plot_cols,
+          fig_width = knitr::opts_chunk$get('fig.width') %||% 8.4,
+          cbar_width = CBAR_WIDTH
+        )
+
+        plot_obj = plot_summary_maps(
+          diff_list = stats::setNames(list(domain_diff), domain),
+          emep_var = v,
+          var_params_list = WRF_VAR_PARAMS_LIST,
+          map_geo_params_list = map_geo_features,
+          testref_pal_pth = TESTREF_PALETTE,
+          absdiff_pal_pth = ABSDIFF_PALETTE,
+          reldiff_pal_pth = RELDIFF_PALETTE,
+          plot_titles = PLOT_TITLES,
+          cbar_label_angle = CBAR_LABEL_ANGLE,
+          cbar_label_vjust = CBAR_LABEL_VJUST,
+          cbar_label_hjust = CBAR_LABEL_HJUST,
+          cbar_width = this_cbar_width,
+          cbar_height = CBAR_HEIGHT,
+          legend_title_size = LEGEND_TITLE_SIZE,
+          legend_text_size = LEGEND_TEXT_SIZE,
+          rasterise_map_layers = SUMMARY_MAP_PDF_RASTERISE,
+          raster_dpi = SUMMARY_MAP_PDF_DPI
+        )
+
+        attr(plot_obj, 'map_stars') = domain_diff[[RUN_LABELS[[1]]]]
+        attr(plot_obj, 'map_data') = domain_diff
+        attr(plot_obj, 'domain') = domain
+
+        plot_obj
+      })
+  })
+
+summary_map_plots = summary_map_plots %>%
+  purrr::map(purrr::compact)
+
+# Arrange map panels.
+
+summary_map_grobs = summary_map_plots %>%
+  purrr::map(function(var_plots) {
+
+    var_plots %>%
+      purrr::map(arrange_comp_map_output) %>%
+      purrr::map(
+        add_grob_outer_margin,
+        left = 0.25,
+        right = 0.25,
+        top = 0.05,
+        bottom = 0.10
+      )
+  })
+
+# -----------------------------------------------------------------------
+# Prepare standalone PDF output
+# -----------------------------------------------------------------------
+
+if (SAVE_STATIC_OUTPUTS) {
+
+  # Determine whether all domains for each variable contain Test-only maps.
+
+  test_only_maps = summary_map_plots %>%
+    purrr::map_lgl(function(var_plots) {
+
+      all(
+        purrr::map_int(
+          var_plots,
+          ~ length(.x$plots)
+        ) == 1
+      )
+    })
+  
+    # ---------------------------------------------------------------------
+    # Create PDF map pages
+    #
+    # Each variable/domain combination is stored as a separate page.
+    # ---------------------------------------------------------------------
+  
+    summary_map_pdf_pages = summary_map_grobs %>%
+      .[sort(names(.))] %>%
+      purrr::imap(function(var_grobs, v) {
+  
+        purrr::imap(
+          var_grobs,
+          function(domain_grob, domain) {
+  
+            list(
+              title = v,
+              domain = domain,
+              grob = domain_grob
+            )
+          }
+        )
+      }) %>%
+      purrr::list_flatten()
+    
+    # ---------------------------------------------------------------------
+    # Create paginated PDF contents pages.
+    #
+    # The front page and contents pages are unnumbered.
+    # Map-page numbering starts at Page 1.
+    # ---------------------------------------------------------------------
+    
+    summary_map_contents = summary_map_pdf_pages %>%
+      unname() %>%
+      purrr::imap_dfr(function(page, i) {
+    
+        tibble::tibble(
+          var = page$title,
+          page = i
+        )
+    
+      }) %>%
+      dplyr::distinct(var, .keep_all = TRUE)
+    
+    
+    contents_rows_per_page = 24
+    
+    contents_page_groups = split(
+      summary_map_contents,
+      ceiling(seq_len(nrow(summary_map_contents)) / contents_rows_per_page)
+    )
+    
+    
+    make_contents_page = function(contents_data, contents_page) {
+    
+      contents_title = grid::textGrob(
+        if (contents_page == 1) 'Contents' else 'Contents (continued)',
+        x = grid::unit(0.08, 'npc'),
+        just = 'left',
+        gp = grid::gpar(
+          fontsize = 16,
+          fontface = 'bold'
+        )
+      )
+    
+      contents_rows = contents_data %>%
+        purrr::pmap(function(var, page) {
+      
+          var_lab = format_var_label(
+            var = var,
+            var_params_list = WRF_VAR_PARAMS_LIST,
+            context = 'maps',
+            output = 'plotmath',
+            include_units = TRUE
+          )
+      
+          var_lab = parse(text = var_lab)[[1]]
+      
+          var_grob = grid::textGrob(
+            var_lab,
+            x = grid::unit(0.08, 'npc'),
+            just = 'left',
+            gp = grid::gpar(fontsize = 10)
+          )
+    
+          page_grob = grid::textGrob(
+            page,
+            x = grid::unit(0.92, 'npc'),
+            just = 'right',
+            gp = grid::gpar(fontsize = 10)
+          )
+    
+          leader_grob = grid::segmentsGrob(
+            x0 = grid::unit(0.08, 'npc') +
+              grid::grobWidth(var_grob) +
+              grid::unit(0.08, 'in'),
+            x1 = grid::unit(0.92, 'npc') -
+              grid::grobWidth(page_grob) -
+              grid::unit(0.08, 'in'),
+            y0 = grid::unit(0.4, 'npc'),
+            y1 = grid::unit(0.4, 'npc'),
+            gp = grid::gpar(
+              lty = 'dotted',
+              lwd = 1
+            )
+          )
+    
+          grid::grobTree(
+            var_grob,
+            leader_grob,
+            page_grob
+          )
+        })
+    
+      contents_grob = gridExtra::arrangeGrob(
+        grobs = c(contents_rows, list(grid::nullGrob())),
+        ncol = 1,
+        heights = grid::unit.c(
+          grid::unit(rep(0.32, length(contents_rows)), 'in'),
+          grid::unit(1, 'null')
+        )
+      )
+    
+      gridExtra::arrangeGrob(
+        contents_title,
+        contents_grob,
+        ncol = 1,
+        heights = c(0.08, 0.92)
+      )
+    }
+    
+    summary_map_contents_pages = contents_page_groups %>%
+      purrr::imap(function(contents_data, contents_page) {
+    
+        make_contents_page(
+          contents_data = contents_data,
+          contents_page = contents_page
+        )
+    
+      })
+    
+    # ---------------------------------------------------------------------
+    # Add map-page titles and page numbers.
+    #
+    # The front page and contents pages are unnumbered.
+    # Map pages start at Page 1.
+    # ---------------------------------------------------------------------
+    
+    summary_map_grobs_pdf = summary_map_pdf_pages %>%
+      unname() %>%
+      purrr::imap(function(page, i) {
+    
+        # Format variable label.
+    
+        var_lab = format_var_label(
+          var = page$title,
+          var_params_list = WRF_VAR_PARAMS_LIST,
+          context = 'maps',
+          output = 'plotmath',
+          include_units = TRUE
+        )
+    
+        # Identify the summary statistic.
+    
+        this_stat = if (page$title == 'precip') {
+          'Accumulated'
+        } else {
+          summary_map_test_stat_title
+        }
+    
+        # Create page title.
+    
+        page_title = grid::textGrob(
+          label = parse(text = stringr::str_glue(
+            '"{this_stat}"~{var_lab}'
+          ))[[1]],
+          gp = grid::gpar(fontsize = 13, fontface = 'bold')
+        )
+    
+        # Add domain name beneath the title.
+    
+        page_domain = grid::textGrob(
+          page$domain,
+          gp = grid::gpar(fontsize = 9)
+        )
+    
+        page_header = gridExtra::arrangeGrob(
+          page_title,
+          page_domain,
+          ncol = 1,
+          heights = c(0.6, 0.4)
+        )
+    
+        # Add page number.
+    
+        page_number = grid::textGrob(
+          stringr::str_glue('Page {i}'),
+          x = grid::unit(0.96, 'npc'),
+          just = 'right',
+          gp = grid::gpar(fontsize = 9)
+        )
+    
+        # Assemble the complete PDF page.
+    
+        gridExtra::arrangeGrob(
+          page_header,
+          page$grob,
+          page_number,
+          ncol = 1,
+          heights = c(0.055, 0.915, 0.03)
+        )
+      })
+    
+    # ---------------------------------------------------------------------
+    # Create PDF front page
+    # ---------------------------------------------------------------------
+    
+    front_page_title = grid::textGrob(
+      'WRF QAQC summary maps',
+      x = 0.5,
+      y = 0.94,
+      just = 'centre',
+      gp = grid::gpar(
+        fontsize = 18,
+        fontface = 'bold'
+      )
+    )
+    
+    # Format domain information, preserving outer-to-inner order.
+    
+    domain_info = stringr::str_glue(
+      '{names(TEST_DOMAINS)}: {TEST_DOMAINS}'
+    ) %>%
+      stringr::str_c(collapse = '\n')
+    
+    # Test run information.
+    
+    front_page_info = c(
+      'Test run',
+      wrap_file_path(QAQC_DIR)
+    )
+    
+    if (!is.null(REF_QAQC_DIR)) {
+    
+      front_page_info = c(
+        front_page_info,
+        '',
+        'Reference run',
+        wrap_file_path(REF_QAQC_DIR)
+      )
+    }
+    
+    # Domain and summary information.
+    
+    front_page_info = c(
+      front_page_info,
+      '',
+      stringr::str_glue('Domains:\n{domain_info}'),
+      '',
+      'Test statistic',
+      SUMMARY_MAP_TEST_STAT
+    )
+    
+    if (!is.null(SUMMARY_MAP_TEST_DATE_TAG)) {
+    
+      front_page_info = c(
+        front_page_info,
+        '',
+        'Test date tag',
+        SUMMARY_MAP_TEST_DATE_TAG
+      )
+    }
+    
+    if (!is.null(REF_WRF_SUMMARY_DIR)) {
+    
+      front_page_info = c(
+        front_page_info,
+        '',
+        'Reference statistic',
+        SUMMARY_MAP_REF_STAT
+      )
+    
+      if (!is.null(SUMMARY_MAP_REF_DATE_TAG)) {
+    
+        front_page_info = c(
+          front_page_info,
+          '',
+          'Reference date tag',
+          SUMMARY_MAP_REF_DATE_TAG
+        )
+      }
+    }
+    
+    # Create front-page information grob.
+    
+    front_page_info_grob = grid::textGrob(
+      paste(front_page_info, collapse = '\n'),
+      x = 0.5,
+      y = 0.86,
+      just = c('centre', 'top'),
+      gp = grid::gpar(
+        fontsize = 11,
+        lineheight = 1.35
+      )
+    )
+    
+    # Assemble front page.
+    
+    summary_map_front_page = grid::grobTree(
+      front_page_title,
+      front_page_info_grob
+    )
+    
+    # ---------------------------------------------------------------------
+    # Determine suitable figure height for static maps shown in the HTML
+    # report.
+    #
+    # Use the largest required height so that dynamically generated child
+    # chunks can share one figure height.
+    # ---------------------------------------------------------------------
+    
+    if (isTRUE(PLOT_STATIC_SUMMARY_MAPS)) {
+    
+      report_map_heights = summary_map_plots %>%
+        purrr::map(function(var_plots) {
+    
+          var_plots %>%
+            purrr::map_dbl(function(plot_obj) {
+    
+              get_comp_map_fig_height(
+                map_stars = attr(plot_obj, 'map_stars'),
+                n_plots = length(plot_obj$plots),
+                fig_width = knitr::opts_chunk$get('fig.width') %||% 8.4
+              )
+            })
+        }) %>%
+        purrr::list_c()
+    
+      report_map_heights = report_map_heights[
+        is.finite(report_map_heights) &
+          !is.na(report_map_heights)
+      ]
+    
+      if (length(report_map_heights) > 0) {
+        report_map_height = max(report_map_heights)
+      }
+    }
+}
+
+```
+
+```{r save-static-summary-maps-pdf, include=FALSE, eval=(PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS) && SAVE_STATIC_OUTPUTS}
+summary_map_pdf_export = c(
+  list(summary_map_front_page),
+  summary_map_contents_pages,
+  summary_map_grobs_pdf
+)
+
+export = gridExtra::marrangeGrob(
+  grobs = summary_map_pdf_export,
+  nrow = 1,
+  ncol = 1,
+  top = NULL
+)
+
+ggplot2::ggsave(
+  filename = fs::path(
+    maps_pth_out,
+    SUMMARY_MAPS_PDF_FNAME
+  ),
+  plot = export,
+  width = 7,
+  height = 10,
+  units = 'in'
+)
+
+logger::log_info(
+  glue::glue(
+    'Static summary maps saved to {fs::path(maps_pth_out, SUMMARY_MAPS_PDF_FNAME)}'
+  )
+)
+```
+
+
+```{r create-interactive-summary-maps, eval=REPORT_STYLE == 'interactive' && PLOT_INTERACTIVE_SUMMARY_MAPS}
+
+interactive_summary_map_vars = intersect(
+  summary_map_vars_report,
+  names(summary_map_data)
+)
+
+if (length(interactive_summary_map_vars) == 0) {
+
+  stop(
+    'None of SUMMARY_MAP_VARS_REPORT were found in the available summary map data.',
+    call. = FALSE
+  )
+}
+
+summary_map_leaflet = summary_map_data[
+  interactive_summary_map_vars
+] %>%
+  purrr::imap(function(this_diff, v) {
+
+    plot_types = INTERACTIVE_SUMMARY_MAP_TYPES %>%
+      intersect(c('test', 'ref', 'absdiff', 'reldiff'))
+
+    this_diff %>%
+      purrr::imap(function(domain_diff, domain) {
+
+        plot_summary_maps_leaflet(
+          diff_list = stats::setNames(
+            list(domain_diff),
+            domain
+          ),
+          var_nm = v,
+          map_types = plot_types,
+          var_params_list = WRF_VAR_PARAMS_LIST,
+          testref_pal_pth = TESTREF_PALETTE,
+          absdiff_pal_pth = ABSDIFF_PALETTE,
+          reldiff_pal_pth = RELDIFF_PALETTE,
+          display = INTERACTIVE_SUMMARY_MAP_DISPLAY,
+          basemap = INTERACTIVE_SUMMARY_MAP_BASEMAP,
+          opacity = INTERACTIVE_SUMMARY_MAP_OPACITY,
+          hover_radius = INTERACTIVE_SUMMARY_MAP_HOVER_RADIUS,
+          hover_values = INTERACTIVE_SUMMARY_MAP_HOVER_VALUES_OVERRIDE,
+          hover_colour = INTERACTIVE_SUMMARY_MAP_HOVER_COLOUR,
+          hover_max_points = INTERACTIVE_SUMMARY_MAP_HOVER_MAX_POINTS,
+          show_leaflet_legend = INTERACTIVE_SUMMARY_MAP_LEGEND
+        )
+      })
+  })
+```
+
+```{r include-summary-maps, results='asis', eval=PLOT_STATIC_SUMMARY_MAPS || PLOT_INTERACTIVE_SUMMARY_MAPS, fig.width=8.4}
+available_summary_map_vars = unique(
+  c(
+    names(summary_map_plots %||% list()),
+    names(summary_map_leaflet %||% list())
+  )
+)
+
+summary_map_vars_to_render = summary_map_vars_report[
+  summary_map_vars_report %in% available_summary_map_vars
+] %>%
+  sort()
+
+chunk_fence = stringr::str_c(
+  '`',
+  '`',
+  '`'
+)
+
+make_safe_chunk_label = function(
+    x,
+    i
+) {
+
+  out = x %>%
+    stringr::str_replace_all(
+      '[^A-Za-z0-9_-]+',
+      '-'
+    ) %>%
+    stringr::str_replace_all(
+      '^-|-$',
+      ''
+    )
+
+  if (is.na(out) || out == '') {
+
+    out = stringr::str_glue(
+      'var-{i}'
+    )
+  }
+
+  out
+}
+
+report_map_height_safe = if (
+  !is.null(report_map_height) &&
+  length(report_map_height) == 1 &&
+  is.finite(report_map_height) &&
+  !is.na(report_map_height)
+) {
+
+  report_map_height
+
+} else {
+
+  6
+}
+
+
+# -------------------------------------------------------------------------
+# Create variable sections
+#
+# Static report:
+#
+# ## Variable
+# ### Domain
+# [static map]
+#
+# Interactive report, one map type:
+#
+# ## Variable {.tabset}
+# ### Domain
+# [map]
+#
+# Interactive report, both map types:
+#
+# ## Variable {.tabset}
+# ### Domain {.tabset}
+# #### Static
+# [static map]
+# #### Interactive
+# [interactive map]
+# -------------------------------------------------------------------------
+
+summary_map_child = purrr::imap_chr(
+  summary_map_vars_to_render,
+  function(var_nm, i) {
+
+    # ---------------------------------------------------------------------
+    # Determine map types to display in the report
+    # ---------------------------------------------------------------------
+
+    show_static =
+      isTRUE(PLOT_STATIC_SUMMARY_MAPS) &&
+      var_nm %in% names(summary_map_plots %||% list())
+    
+    show_interactive =
+      isTRUE(make_interactive_summary_maps) &&
+      var_nm %in% names(summary_map_leaflet %||% list())
+
+    show_both =
+      show_static &&
+      show_interactive
+
+    safe_var_nm = make_safe_chunk_label(
+      var_nm,
+      i
+    )
+
+
+    # ---------------------------------------------------------------------
+    # Determine domains available for this variable
+    # ---------------------------------------------------------------------
+
+    static_domains = if (show_static) {
+
+      names(
+        summary_map_plots[[var_nm]]
+      )
+
+    } else {
+
+      character()
+    }
+
+    interactive_domains = if (show_interactive) {
+
+      names(
+        summary_map_leaflet[[var_nm]]
+      )
+
+    } else {
+
+      character()
+    }
+
+    domain_names = unique(
+      c(
+        static_domains,
+        interactive_domains
+      )
+    )
+
+
+    # ---------------------------------------------------------------------
+    # Create domain sections
+    # ---------------------------------------------------------------------
+
+    domain_chunks = purrr::imap_chr(
+      domain_names,
+      function(domain_id, domain_i) {
+
+        domain_lab = names(TEST_DOMAINS)[
+          match(domain_id, TEST_DOMAINS)
+        ]
+        
+        if (length(domain_lab) == 0 || is.na(domain_lab)) {
+          domain_lab = domain_id
+        }
+
+        safe_domain = make_safe_chunk_label(
+          domain_id,
+          domain_i
+        )
+
+        this_static =
+          show_static &&
+          domain_id %in% static_domains
+
+        this_interactive =
+          show_interactive &&
+          domain_id %in% interactive_domains
+
+        this_show_both =
+          this_static &&
+          this_interactive
+
+
+        # -----------------------------------------------------------------
+        # Static map
+        # -----------------------------------------------------------------
+
+        static_chunk = if (this_static) {
+
+          static_heading = if (this_show_both) {
+            '\n\n#### Static\n\n'
+          } else {
+            '\n\n'
+          }
+
+          stringr::str_c(
+            static_heading,
+            glue::glue(
+              .open = '<<',
+              .close = '>>',
+                '<<chunk_fence>>{r summary-map-static-<<safe_var_nm>>-<<safe_domain>>, echo=FALSE, fig.width=8.4, fig.height=report_map_height_safe, dpi=SUMMARY_MAP_REPORT_DPI, fig.retina=1}
+  
+  print(
+    arrange_comp_map_output(
+      summary_map_plots[["<<var_nm>>"]][["<<domain_id>>"]]
+    )
+  )
+  
+  <<chunk_fence>>
+  
+  '
+            )
+          )
+
+        } else {
+
+          ''
+        }
+
+
+        # -----------------------------------------------------------------
+        # Interactive map
+        # -----------------------------------------------------------------
+
+        interactive_chunk = if (this_interactive) {
+
+          interactive_heading = if (this_show_both) {
+            '\n\n#### Interactive\n\n'
+          } else {
+            '\n\n'
+          }
+
+          stringr::str_c(
+            interactive_heading,
+            glue::glue(
+              .open = '<<',
+              .close = '>>',
+              '<<chunk_fence>>{r summary-map-interactive-<<safe_var_nm>>-<<safe_domain>>, echo=FALSE}
+
+              domain_maps = summary_map_leaflet[["<<var_nm>>"]][["<<domain_id>>"]]
+              
+              htmltools::tagList(
+                purrr::imap(
+                  domain_maps,
+                  function(this_map, map_type) {
+              
+                    plot_title = dplyr::case_when(
+                      map_type == "test" ~ PLOT_TITLES[1],
+                      map_type == "ref" ~ PLOT_TITLES[2],
+                      map_type == "absdiff" ~ PLOT_TITLES[3],
+                      map_type == "reldiff" ~ PLOT_TITLES[4],
+                      TRUE ~ NA_character_
+                    )
+              
+                    map_type_label = if (
+                      !is.na(plot_title) &&
+                      nzchar(plot_title)
+                    ) {
+              
+                      plot_title
+              
+                    } else {
+              
+                      dplyr::case_when(
+                        map_type == "test" ~ test_label,
+                        map_type == "ref" ~ ref_label,
+                        map_type == "absdiff" ~ "Absolute difference",
+                        map_type == "reldiff" ~ "Relative difference",
+                        TRUE ~ stringr::str_to_sentence(
+                          stringr::str_replace_all(
+                            map_type,
+                            "_",
+                            " "
+                          )
+                        )
+                      )
+                    }
+              
+                    htmltools::tagList(
+                      if (length(domain_maps) > 1) {
+              
+                        htmltools::tags$h4(
+                          map_type_label
+                        )
+                      },
+                      this_map
+                    )
+                  }
+                )
+              )
+              
+              <<chunk_fence>>
+              
+              '
+            )
+          )
+
+        } else {
+
+          ''
+        }
+
+
+        # -----------------------------------------------------------------
+        # Domain heading
+        #
+        # In an interactive report, domains are tabs because the variable
+        # heading is a tabset. If both static and interactive maps are
+        # present, the domain itself becomes a nested tabset.
+        # -----------------------------------------------------------------
+
+        domain_heading = paste0(
+          '\n\n### ',
+          domain_lab,
+          if (
+            REPORT_STYLE == 'interactive' &&
+            this_show_both
+          ) {
+            ' {.tabset}'
+          } else {
+            ''
+          },
+          '\n\n'
+        )
+
+        stringr::str_c(
+          domain_heading,
+          static_chunk,
+          interactive_chunk
+        )
+      }
+    ) %>%
+      stringr::str_c(
+        collapse = '\n'
+      )
+
+
+    # ---------------------------------------------------------------------
+    # Variable heading
+    #
+    # Interactive reports use the variable heading as the domain tabset.
+    # Static reports retain ordinary headings so all domains are visible
+    # sequentially.
+    # ---------------------------------------------------------------------
+
+    var_lab = format_var_label(
+      var = var_nm,
+      var_params_list = WRF_VAR_PARAMS_LIST,
+      context = 'maps',
+      output = 'html',
+      include_units = TRUE
+    )
+    
+    variable_heading = paste0(
+      '\n\n## ',
+      var_lab,
+      if (REPORT_STYLE == 'interactive') {
+        ' {.tabset}'
+      } else {
+        ''
+      },
+      '\n\n'
+    )
+
+    stringr::str_c(
+      variable_heading,
+      domain_chunks
+    )
+  }
+)
+
+
+# -------------------------------------------------------------------------
+# Render Maps section
+# -------------------------------------------------------------------------
+
+cat(
+  knitr::knit_child(
+    text = summary_map_child,
+    envir = environment(),
+    quiet = TRUE
+  ),
+  sep = '\n'
+)
+
+```
+
+```{r load_collated_mobs, include=FALSE, eval = NEED_MOBS}
+
+# task_start = Sys.time()
+# load_test_mobs_task_start = Sys.time()
+
+mobs_domain_name = tail(
+  names(TEST_DOMAINS),
+  1
+)
+
+mobs_run_title_info = stringr::str_c(
+  'Domain:',
+  mobs_domain_name
+)
+
+# Get variable parameters for model statistics tables.
+
+mobs_var_params = MOBS_EVAL_VARS %>%
+  purrr::set_names() %>%
+  purrr::map_chr(function(var_nm) {
+    resolve_mobs_var_id(
+      var = var_nm,
+      var_params_list = WRF_VAR_PARAMS_LIST
+    )
+  })
+
+if (identical(MOBS_MODSTATS_VAR_FILL, 'params_file')) {
+
+  mobs_modstats_var_fill = mobs_var_params %>%
+    purrr::map_chr(function(var_param_nm) {
+
+      get_var_param(
+        var = var_param_nm,
+        key = c('mobs', 'obs_fill'),
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        default = '#ffffff'
+      )
+    })
+
+} else if (is.null(MOBS_MODSTATS_VAR_FILL)) {
+
+  mobs_modstats_var_fill = NULL
+
+} else {
+
+  mobs_modstats_var_fill = MOBS_MODSTATS_VAR_FILL
+}
+
+mobs_domain_mask_sf = as_domain_polygon_sf(
+  MOBS_DOMAIN_MASK,
+  filter_name = 'domain mask'
+)
+
+# Apply the WRF domain filters.
+
+sites_used_pth = find_sites_used_file(
+  data_pth_out
+)
+
+if (is.null(sites_used_pth)) {
+  stop(
+    'Could not find Sites_used.rds or 00Sites_used.rds in: ',
+    data_pth_out,
+    call. = FALSE
+  )
+}
+
+sites_geo = readr::read_rds(
+  sites_used_pth
+) %>%
+  dplyr::distinct(
+    code,
+    .keep_all = TRUE
+  )
+
+if (
+  !is.null(MOBS_GROUPING_VAR) &&
+  !MOBS_GROUPING_VAR %in% names(sites_geo)
+) {
+
+  logger::log_warn(
+    glue::glue(
+      "MOBS grouping variable '{MOBS_GROUPING_VAR}' is not available ",
+      'in sites_geo. Site grouping will be disabled.'
+    )
+  )
+
+  MOBS_GROUPING_VAR = NULL
+}
+
+sites_geo = apply_domain_filter_sites(
+  sites_geo = sites_geo,
+  domain_crop = NULL,
+  domain_mask = mobs_domain_mask_sf
+)
+
+domain_site_codes = sites_geo %>%
+  dplyr::pull(code) %>%
+  unique() %>%
+  stats::na.omit() %>%
+  as.character()
+
+if (length(domain_site_codes) == 0) {
+  stop(
+    'No monitoring sites remain after applying DOMAIN_CROP/DOMAIN_MASK.',
+    call. = FALSE
+  )
+}
+
+# Read saved MOBS data, restricted to retained sites.
+
+mobs_pths_all = fs::dir_ls(
+  data_pth_out,
+  regexp = '_mod_obs\\.rds$'
+)
+
+mobs_pth_codes = mobs_pths_all %>%
+  fs::path_file() %>%
+  stringr::str_remove('_mod_obs\\.rds$')
+
+mobs_pths = mobs_pths_all[
+  mobs_pth_codes %in% domain_site_codes
+]
+
+missing_mobs_site_codes = setdiff(
+  domain_site_codes,
+  mobs_pth_codes
+)
+
+if (length(missing_mobs_site_codes) > 0) {
+
+  logger::log_warn(
+    stringr::str_glue(
+      'No mod_obs.rds files found for retained site(s): {paste(missing_mobs_site_codes, collapse = ", ")}'
+    )
+  )
+}
+
+if (length(mobs_pths) == 0) {
+  stop(
+    'No mod_obs.rds files found for sites retained after applying DOMAIN_CROP/DOMAIN_MASK.',
+    call. = FALSE
+  )
+}
+
+# Load and convert MOBS data.
+
+mobs_load_workers = set_parallel_plan(
+  workers_requested = worker_cap,
+  max_workers = 8,
+  prefer_multicore = TRUE
+)
+
+# qaqc_parallel_info[['MOBS load']] = tibble::tibble(
+#   section = 'MOBS load',
+#   workers = unclass(future::nbrOfWorkers())
+# )
+
+mobs_list = mobs_pths %>%
+  furrr::future_map(
+    ~ readr::read_rds(.x) %>%
+      mobs_to_long(),
+    .options = furrr::furrr_options(
+      seed = TRUE,
+      scheduling = Inf,
+      packages = c(
+        'readr',
+        'dplyr',
+        'tidyr',
+        'purrr',
+        'tibble'
+      ),
+      globals = c(
+        'mobs_to_long',
+        'mobs_dframe_to_long'
+      )
+    )
+  )
+
+future::plan(
+  future::sequential
+)
+
+names(mobs_list) = mobs_pths %>%
+  fs::path_file() %>%
+  stringr::str_remove('_mod_obs\\.rds$')
+
+# Remove sites with invalid observation data.
+
+dodgy_sites = mobs_list %>%
+  purrr::keep(
+    function(x) {
+
+      regular_dodgy = !is.null(x$regular) &&
+        (
+          !'obs' %in% names(x$regular) ||
+            is.list(x$regular$obs)
+        )
+
+      interval_dodgy = !is.null(x$interval) &&
+        (
+          !'obs' %in% names(x$interval) ||
+            is.list(x$interval$obs)
+        )
+
+      regular_dodgy || interval_dodgy
+    }
+  )
+
+if (length(dodgy_sites) > 0) {
+
+  logger::log_warn(
+    glue::glue(
+      "Removing {length(dodgy_sites)} site(s) with invalid observation data: ",
+      "{paste(names(dodgy_sites), collapse = ', ')}"
+    )
+  )
+
+  mobs_list = mobs_list[
+    !names(mobs_list) %in% names(dodgy_sites)
+  ]
+}
+
+mobs_site_codes = names(mobs_list)
+
+sites_geo = sites_geo %>%
+  dplyr::filter(
+    code %in% mobs_site_codes
+  ) %>%
+  dplyr::distinct(
+    code,
+    .keep_all = TRUE
+  )
+
+# Record task timing.
+
+# qaqc_task_timings[['Load test MOBS']] = tibble::tibble(
+#   task = 'Load test MOBS',
+#   runtime_seconds = as.numeric(
+#     difftime(
+#       Sys.time(),
+#       load_test_mobs_task_start,
+#       units = 'secs'
+#     )
+#   )
+# )
+
+# Normalise requested report time-series configuration.
+
+report_tseries_config = if (
+  isTRUE(PLOT_MOBS_TSERIES) &&
+    !is.null(MOBS_STATION_REPORT_TSERIES) &&
+    length(MOBS_STATION_REPORT_TSERIES) > 0
+) {
+
+  MOBS_STATION_REPORT_TSERIES %>%
+    purrr::map(
+      normalise_mobs_report_tseries_config
+    )
+
+} else {
+
+  list()
+}
+
+report_site_codes = report_tseries_config %>%
+  purrr::map_chr('code')
+
+names(report_tseries_config) = report_site_codes
+
+# Retain only requested sites with available MOBS data.
+
+missing_report_site_codes = setdiff(
+  report_site_codes,
+  mobs_site_codes
+)
+
+if (length(missing_report_site_codes) > 0) {
+
+  logger::log_warn(
+    glue::glue(
+      "Requested MOBS time-series site(s) not available for reporting: ",
+      "{paste(missing_report_site_codes, collapse = ', ')}"
+    )
+  )
+}
+
+report_site_codes = intersect(
+  report_site_codes,
+  mobs_site_codes
+)
+
+report_tseries_config = report_tseries_config[
+  report_site_codes
+]
+```
+
+
+```{r load_ref_mobs, include=FALSE, eval = NEED_MOBS}
+if (NEED_MOBS && !is.null(REF_MOBS_DIR)) {
+
+  # Read Reference site metadata.
+
+  ref_sites_used_pth = find_sites_used_file(
+    REF_MOBS_DIR
+  )
+
+  if (is.null(ref_sites_used_pth)) {
+    stop(
+      'Could not find Reference Sites_used.rds or 00Sites_used.rds in: ',
+      REF_MOBS_DIR,
+      call. = FALSE
+    )
+  }
+
+  ref_sites_geo = readr::read_rds(
+    ref_sites_used_pth
+  ) %>%
+    dplyr::distinct(
+      code,
+      .keep_all = TRUE
+    )
+
+  # Load Reference MOBS for sites available in the Test data.
+
+  ref_mobs_pths = fs::dir_ls(
+    REF_MOBS_DIR,
+    regexp = '_mod_obs\\.rds$'
+  )
+
+  if (length(ref_mobs_pths) == 0) {
+    stop(
+      'No Reference MOBS files found in: ',
+      REF_MOBS_DIR,
+      call. = FALSE
+    )
+  }
+
+  # Load and convert Reference MOBS data.
+
+  ref_mobs_workers = set_parallel_plan(
+    workers_requested = worker_cap,
+    max_workers = 8,
+    prefer_multicore = TRUE
+  )
+
+  ref_mobs_list = ref_mobs_pths %>%
+    furrr::future_map(
+      ~ readr::read_rds(.x) %>%
+        mobs_to_long(),
+      .options = furrr::furrr_options(
+        seed = TRUE,
+        scheduling = Inf,
+        packages = c(
+          'readr',
+          'dplyr',
+          'tidyr',
+          'purrr',
+          'tibble'
+        ),
+        globals = c(
+          'mobs_to_long',
+          'mobs_dframe_to_long'
+        )
+      )
+    )
+
+  future::plan(
+    future::sequential
+  )
+
+  names(ref_mobs_list) = ref_mobs_pths %>%
+    fs::path_file() %>%
+    stringr::str_remove('_mod_obs\\.rds$')
+
+  # Remove sites with invalid observation data.
+
+  ref_dodgy_sites = ref_mobs_list %>%
+    purrr::keep(function(x) {
+
+      regular_dodgy = !is.null(x$regular) &&
+        (
+          !'obs' %in% names(x$regular) ||
+            is.list(x$regular$obs)
+        )
+
+      interval_dodgy = !is.null(x$interval) &&
+        (
+          !'obs' %in% names(x$interval) ||
+            is.list(x$interval$obs)
+        )
+
+      regular_dodgy || interval_dodgy
+    })
+
+  if (length(ref_dodgy_sites) > 0) {
+
+    logger::log_warn(
+      glue::glue(
+        "Removing {length(ref_dodgy_sites)} Reference site(s) with invalid observation data: ",
+        "{paste(names(ref_dodgy_sites), collapse = ', ')}"
+      )
+    )
+
+    ref_mobs_list = ref_mobs_list[
+      !names(ref_mobs_list) %in% names(ref_dodgy_sites)
+    ]
+  }
+
+  # Retain metadata for successfully loaded Reference sites.
+
+  ref_sites_geo = ref_sites_geo %>%
+    dplyr::filter(
+      code %in% names(ref_mobs_list)
+    ) %>%
+    dplyr::distinct(
+      code,
+      .keep_all = TRUE
+    )
+}
+```
+
+```{r mobs_sites_map_text, results = 'asis', eval = NEED_MOBS}
+if (isTRUE(NEED_MOBS)) {
+
+  # IMPORTANT: Do not remove this section header.
+  # The heading text may be edited if required.
+  cat('# Evaluation against observations\n\n')
+
+  mobs_sites_map_sentences = c(
+    'Hourly modelled meteorological variables were compared with observations from the NOAA Global Historical Climatology Network hourly (GHCNh) database.',
+    'The map below shows the observation sites retained for model evaluation.'
+  )
+
+  if (
+    !is.null(MOBS_GROUPING_VAR) &&
+    MOBS_GROUPING_VAR %in% names(sites_geo)
+  ) {
+    mobs_sites_map_sentences = c(
+      mobs_sites_map_sentences,
+      glue::glue(
+        'Sites are grouped by {MOBS_GROUPING_VAR_LABEL}.'
+      )
+    )
+  }
+
+  mobs_sites_map_sentences = c(
+    mobs_sites_map_sentences,
+    'Click on a site marker to view further site information, or use the search box below the map to find a specific site.'
+  )
+
+  if (isTRUE(PLOT_MOBS_TSERIES)) {
+    mobs_sites_map_sentences = c(
+      mobs_sites_map_sentences,
+      'Time-series plots of modelled and observed values for selected sites are provided in the Time series plots section.'
+    )
+  }
+
+  cat(
+    '<p>',
+    stringr::str_c(
+      mobs_sites_map_sentences,
+      collapse = ' '
+    ),
+    '</p>\n\n',
+    sep = ''
+  )
+}
+```
+
+
+``` {r plot_mobs_sites_map, eval = NEED_MOBS, fig.width = 8.4}
+
+sites_geo_map_sub = if (length(report_site_codes) > 0) {
+  sites_geo %>%
+    dplyr::filter(code %in% report_site_codes)
+} else {
+  sites_geo[0, ]
+}
+
+highlight_sites_for_map = if (nrow(sites_geo_map_sub) > 0) {
+  sites_geo_map_sub
+} else {
+  NULL
+}
+
+mobs_grouping_var = MOBS_GROUPING_VAR
+
+if (!is.null(mobs_grouping_var)) {
+  if (!mobs_grouping_var %in% names(sites_geo)) {
+    logger::log_warn(glue::glue("Grouping column '{mobs_grouping_var}' not found - plotting ungrouped."))
+    mobs_grouping_var = NULL
+  }
+}
+
+n_site_types = if (!is.null(mobs_grouping_var)) {
+  sites_geo %>%
+    dplyr::pull(dplyr::all_of(mobs_grouping_var)) %>%
+    unique() %>%
+    stats::na.omit() %>%
+    length()
+} else {
+  1
+}
+
+show_site_type_legend = is.null(mobs_grouping_var) && n_site_types > 1
+
+if (is.null(mobs_grouping_var)) {
+  m = plot_mobs_sites_map2(
+    sites_geo,
+    legend_label = 'Meteorological station',
+    legend_title = NULL,
+    show_legend = FALSE,
+    highlight_sites_df = highlight_sites_for_map,
+    highlight_label = 'Sites shown in report'
+  )
+} else {
+  m = plot_mobs_sites_map2(
+    sites_geo,
+    colours = MOBS_GROUPING_VAR_COLOURS,
+    group_column = mobs_grouping_var,
+    grouping_var_label = MOBS_GROUPING_VAR_LABEL,
+    show_legend = show_site_type_legend,
+    highlight_sites_df = highlight_sites_for_map,
+    highlight_label = 'Sites shown in report'
+  )
+}
+
+# unique choices for autocomplete (code / station / site / name squished)
+na2empty = function(x) if (is.null(x)) "" else ifelse(is.na(x), "", as.character(x))
+
+code_vec    = if ("code"    %in% names(sites_geo)) sites_geo$code    else rep("", nrow(sites_geo))
+station_vec = if ("station" %in% names(sites_geo)) sites_geo$station else rep("", nrow(sites_geo))
+site_vec    = if ("site"    %in% names(sites_geo)) sites_geo$site    else rep("", nrow(sites_geo))
+name_vec    = if ("name"    %in% names(sites_geo)) sites_geo$name    else rep("", nrow(sites_geo))
+
+sites_geo_search = sites_geo %>%
+  mutate(search_key = str_squish(
+    paste(na2empty(code_vec), na2empty(station_vec), na2empty(site_vec), na2empty(name_vec))
+  ))
+
+search_choices = sites_geo_search %>%
+  distinct(search_key) %>%
+  filter(nchar(search_key) > 0) %>%
+  arrange(search_key) %>%
+  pull(search_key)
+
+if (all(c('longitude', 'latitude') %in% names(sites_geo_search))) {
+  m = m %>%
+    leaflet::addCircleMarkers(
+      data = sites_geo_search,
+      lng = ~longitude,
+      lat = ~latitude,
+      opacity = 0,
+      fillOpacity = 0,
+      radius = 0.1,
+      popup = ~search_key,
+      group = 'search_layer',
+      options = leaflet::pathOptions(
+        interactive = FALSE
+      )
+    )
+} else {
+  # assume sf geometry is present
+  m = m %>%
+    leaflet::addCircleMarkers(
+      data = sites_geo_search,
+      opacity = 0,
+      fillOpacity = 0,
+      radius = 0.1,
+      popup = ~search_key,
+      group = 'search_layer',
+      options = leaflet::pathOptions(
+        interactive = FALSE
+      )
+    )
+}
+
+m = m %>%
+  htmlwidgets::onRender(
+    "
+function(el, x){
+  var map = this;
+
+  function flyToMatch(q){
+    if(!q) return;
+    q = (''+q).toLowerCase().trim();
+    var hit = null;
+
+    map.eachLayer(function(lyr){
+      if (!hit && lyr && lyr.options && lyr.options.group === 'search_layer' && lyr.getLatLng){
+        var txt = '';
+
+        if (lyr.getPopup && lyr.getPopup()){
+          txt = ('' + lyr.getPopup().getContent()).toLowerCase();
+        } else if (lyr.options.layerId){
+          txt = ('' + lyr.options.layerId).toLowerCase();
+        }
+
+        if (txt.indexOf(q) !== -1) hit = lyr;
+      }
+    });
+
+    if (hit){
+      var ll = hit.getLatLng();
+      map.flyTo(ll, 10);
+    }
+  }
+
+  function bindBox(){
+    var box = document.getElementById('site_search_input');
+    if (!box) return;
+    box.addEventListener('change', function(){ flyToMatch(this.value); });
+    box.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ flyToMatch(this.value); } });
+  }
+
+  setTimeout(bindBox, 0);
+}
+    "
+  )
+
+# datalist options (escape just in case)
+dl_opts = lapply(search_choices, function(val) {
+  htmltools::tags$option(value = htmltools::htmlEscape(val))
+})
+
+# RENDER: map + input together (no print/browsable)
+htmltools::tagList(
+  m,
+  htmltools::tags$div(
+    style = "margin-top: .75rem; max-width: 600px;",
+    htmltools::tags$label(`for` = "site_search_input", "Search sites (code / station / site):"),
+    htmltools::tags$input(
+      id = "site_search_input", type = "text", list = "site_choices",
+      placeholder = "Type and press Enter...",
+      style = "width: 100%; padding: .4rem .5rem; margin-top: .25rem;"
+    ),
+    htmltools::tags$datalist(id = "site_choices", dl_opts)
+  )
+)
+
+```
+
+```{r plot_mobs_tseries, include=FALSE, eval = PLOT_MOBS_TSERIES || SAVE_STATIC_OUTPUTS}
+
+# Plot daily and hourly MOBS time series per site.
+# Data preparation and optional PDF writing are parallelised.
+# If the report is pure R, set_parallel_plan() can use multicore on HPC and
+# multisession on Windows.
+
+mobs_tseries_prep_task_start = Sys.time()
+
+mobs_tseries_labels = MOBS_TSERIES_LABELS
+
+if (is.na(mobs_tseries_labels['ref_mod'])) {
+  mobs_tseries_labels['ref_mod'] = RUN_LABELS[[2]]
+}
+
+mobs_tzone = if (isTRUE(MOBS_USE_LOCAL_TIME)) {
+  'local'
+} else {
+  'UTC'
+}
+
+if (!exists('MOBS_TSERIES_VARS')) {
+  stop('MOBS_TSERIES_VARS must be defined in the user input file.')
+}
+
+if (isTRUE(MOBS_USE_LOCAL_TIME)) {
+  
+  if (is.null(TIMEZONE_FILE_PTH) || is.na(TIMEZONE_FILE_PTH) || TIMEZONE_FILE_PTH == '') {
+    stop('TIMEZONE_FILE_PTH must be supplied when MOBS_USE_LOCAL_TIME = TRUE.')
+  }
+  
+  if (!fs::file_exists(TIMEZONE_FILE_PTH)) {
+    stop(
+      glue::glue(
+        'Timezone file not found: {TIMEZONE_FILE_PTH}'
+      )
+    )
+  }
+  
+  tz_sf = sf::st_read(
+    TIMEZONE_FILE_PTH,
+    quiet = TRUE
+  ) %>%
+    sf::st_make_valid() %>%
+    dplyr::select(timezone = tzid) %>%
+    sf::st_transform(sf::st_crs(sites_geo))
+  
+  nearest_tz_idx = sf::st_nearest_feature(sites_geo, tz_sf)
+  
+  sites_geo = sites_geo %>%
+    dplyr::mutate(
+      timezone = tz_sf$timezone[nearest_tz_idx]
+    )
+  
+  mobs_site_codes = names(mobs_list)
+  
+  missing_tzone = sites_geo %>%
+    sf::st_drop_geometry() %>%
+    dplyr::filter(
+      code %in% mobs_site_codes,
+      is.na(timezone)
+    ) %>%
+    dplyr::pull(code) %>%
+    unique()
+  
+  if (length(missing_tzone) > 0) {
+    logger::log_warn(
+      glue::glue(
+        'No timezone assigned to the following sites: {paste(missing_tzone, collapse = ", ")}. ',
+        'These sites will be plotted in UTC.'
+      )
+    )
+  }
+  
+} else if (!'timezone' %in% names(sites_geo)) {
+  
+  sites_geo = sites_geo %>%
+    dplyr::mutate(
+      timezone = NA_character_
+    )
+}
+
+sites_meta = if (inherits(sites_geo, 'sf')) {
+  sf::st_drop_geometry(sites_geo)
+} else {
+  sites_geo
+}
+
+sites_meta = sites_meta %>%
+  dplyr::select(
+    dplyr::any_of(c('code', 'station', 'site', 'name', 'timezone', MOBS_GROUPING_VAR))
+  ) %>%
+  dplyr::distinct()
+
+
+mobs_tseries_workers = set_parallel_plan(
+  workers_requested = worker_cap,
+  max_workers = 4,
+  prefer_multicore = TRUE
+)
+
+mobs_tseries_opts = furrr::furrr_options(
+  seed = TRUE,
+  scheduling = Inf,
+  packages = c(
+    'dplyr', 'tidyr', 'lubridate', 'purrr',
+    'tibble', 'openair', 'stringr'
+  ),
+  globals = c(
+    'format_mobs_to_plot',
+    'summarise_mobs',
+    'calculate_cumsum',
+    'resolve_mobs_plot_tzone',
+    'resolve_var_id',
+    'mobs_tzone',
+    'MOBS_THRESHOLD',
+    'MOBS_TSERIES_VARS',
+    'MOBS_TSERIES_SUMMARY_TIME',
+    'MOBS_TSERIES_SUMMARY_STAT',
+    'sites_meta'
+  )
+)
+
+# keep only variables requested for MOBS time-series plots.
+# expanded includes 'subprecip'
+MOBS_TSERIES_VARS_EXPANDED = MOBS_TSERIES_VARS %>%
+  purrr::map(function(var_nm) {
+    
+    var_id = resolve_var_id(
+      var = var_nm,
+      var_params_list = WRF_VAR_PARAMS_LIST
+    )
+    
+    c(
+      var_nm,
+      var_id,
+      get_var_param(
+        var = var_id,
+        key = 'aliases',
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        default = character()
+      )
+    )
+  }) %>%
+  unlist() %>%
+  unique()
+
+mobs_tseries_var_params = MOBS_TSERIES_VARS %>%
+  purrr::set_names() %>%
+  purrr::map_chr(function(var_nm) {
+    resolve_mobs_var_id(
+      var = var_nm,
+      var_params_list = WRF_VAR_PARAMS_LIST
+    )
+  })
+
+mobs_list_for_plot = mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$regular
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        var %in% MOBS_TSERIES_VARS_EXPANDED
+      )
+  }) %>%
+  purrr::compact()
+
+#join ref_mobs_list if it exists
+if (
+  isTRUE(PLOT_REF_TSERIES) &&
+  !is.null(REF_MOBS_DIR) &&
+  exists('ref_mobs_list')
+) {
+
+  mobs_list_for_plot = purrr::imap(
+    mobs_list_for_plot,
+    function(test_df, site_code) {
+
+      if (is.null(test_df) || nrow(test_df) == 0) {
+        return(test_df)
+      }
+
+      ref_mobs = ref_mobs_list[[site_code]]
+
+      if (is.null(ref_mobs)) {
+        return(test_df)
+      }
+
+      ref_df = ref_mobs$regular
+
+      if (is.null(ref_df) || nrow(ref_df) == 0) {
+        return(test_df)
+      }
+
+      ref_df = ref_df %>%
+        dplyr::filter(
+          var %in% MOBS_TSERIES_VARS_EXPANDED
+        ) %>%
+        dplyr::select(
+          code,
+          date,
+          var,
+          ref_mod = mod
+        )
+
+      test_df %>%
+        dplyr::left_join(
+          ref_df,
+          by = c('code', 'date', 'var')
+        )
+    }
+  )
+}
+
+if (!isTRUE(SAVE_STATIC_OUTPUTS)) {
+  mobs_list_for_plot = mobs_list_for_plot[
+    intersect(
+      report_site_codes,
+      names(mobs_list_for_plot)
+    )
+  ]
+}
+
+mobs_plotlist = mobs_list_for_plot %>%
+  furrr::future_map(
+    function(df) {
+      
+      if (is.null(df) || nrow(df) == 0) {
+        return(NULL)
+      }
+      
+      site_code = df %>%
+        dplyr::pull(code) %>%
+        unique() %>%
+        .[1]
+      
+      site_tzone = resolve_mobs_plot_tzone(
+        site_code = site_code,
+        sites_meta = sites_meta,
+        mobs_tzone = mobs_tzone,
+        timezone_col = 'timezone'
+      )
+      
+    df %>%
+      dplyr::mutate(
+        date = lubridate::with_tz(date, tzone = site_tzone)
+      ) %>%
+      dplyr::filter(
+        lubridate::year(date) == min(lubridate::year(date), na.rm = TRUE)
+      ) %>%
+      dplyr::group_by(var) %>%
+      dplyr::filter(
+        any(is.finite(mod)),
+        date >= min(date[is.finite(mod)], na.rm = TRUE),
+        date <= max(date[is.finite(mod)], na.rm = TRUE)
+      ) %>%
+      dplyr::ungroup() %>%
+      format_mobs_to_plot(
+        data_thresh = MOBS_THRESHOLD,
+        drop_na_mod = FALSE, # this is used in summarise_mobs, not for plotting
+        avg_time = MOBS_TSERIES_SUMMARY_TIME,
+        summary_stat = MOBS_TSERIES_SUMMARY_STAT
+      ) %>%
+      dplyr::left_join(sites_meta, by = 'code')
+    },
+    .options = mobs_tseries_opts
+  ) %>%
+  purrr::compact()
+
+future::plan(future::sequential)
+
+names(mobs_plotlist) = mobs_plotlist %>%
+  purrr::map_chr(~ .x %>%
+                   dplyr::pull('code') %>%
+                   unique() %>%
+                   .[1])
+```
+
+```{r save-mobs-tseries-pdfs, eval = PLOT_MOBS_TSERIES && SAVE_STATIC_OUTPUTS}
+# Save MOBS time-series plots to PDF.
+
+time_series_dir = fs::dir_create(
+  fs::path(
+    plots_pth_out,
+    'Time_series'
+  )
+)
+
+pdf_workers = set_parallel_plan(
+  workers_requested = worker_cap,
+  max_workers = 16,
+  prefer_multicore = FALSE
+)
+
+# qaqc_parallel_info[['Save MOBS time series to PDF']] = tibble::tibble(
+#   section = 'Save MOBS time series to PDF',
+#   workers = unclass(future::nbrOfWorkers())
+# )
+
+pdf_opts = furrr::furrr_options(
+  seed = TRUE,
+  scheduling = 1,
+  packages = c(
+    'dplyr',
+    'tidyr',
+    'purrr',
+    'stringr',
+    'lubridate',
+    'ggplot2',
+    'gridExtra',
+    'grid',
+    'ggpubr',
+    'fs',
+    'sf',
+    'textclean',
+    'rlang'
+  ),
+  globals = c(
+    'mobs_tseries_to_pdf',
+    'plot_mobs_tseries',
+    'create_blank_plot',
+    'get_mobs_plot_aesthetics',
+    'WRF_VAR_PARAMS_LIST',
+    'format_var_label',
+    'resolve_mobs_var_id',
+    'resolve_var_id',
+    'get_var_param',
+    'get_var_order_index',
+    'format_lab_for_plotmath',
+    'format_units_for_plotmath',
+    'format_lab_for_html',
+    'format_mobs_summary_label',
+    'format_units_for_html',
+    'format_units_for_plain'
+  )
+)
+
+mobs_plotlist %>%
+  furrr::future_walk(
+    mobs_tseries_to_pdf,
+    out_dir = time_series_dir,
+    run_title_info = mobs_run_title_info,
+    ppp = PPP,
+    plot_all_vars = PLOT_ALL_MOBS_VARS,
+    var_params_list = WRF_VAR_PARAMS_LIST,
+    var_param_names = mobs_tseries_var_params,
+    var_order = MOBS_TSERIES_VARS,
+    summary_time = MOBS_TSERIES_SUMMARY_TIME,
+    summary_stat = MOBS_TSERIES_SUMMARY_STAT,
+    obs_style = MOBS_TSERIES_OBS_STYLE,
+    obs_alpha = MOBS_TSERIES_OBS_ALPHA,
+    ref_colour = MOBS_REF_PLOT_PARAMS[['colour']],
+    ref_linetype = MOBS_REF_PLOT_PARAMS[['linetype']],
+    ref_linewidth = MOBS_REF_PLOT_PARAMS[['linewidth']],
+    legend_labels = mobs_tseries_labels,
+    .options = pdf_opts
+  )
+
+future::plan(future::sequential)
+
+logger::log_info(
+  glue::glue(
+    'MOBS time-series plots saved to PDF using {pdf_workers} worker(s)'
+  )
+)
+
+# qaqc_task_timings[['Save MOBS time series to PDF']] = tibble::tibble(
+#   task = 'Save MOBS time series to PDF',
+#   runtime_seconds = as.numeric(
+#     difftime(
+#       Sys.time(),
+#       save_mobs_tseries_task_start,
+#       units = 'secs'
+#     )
+#   )
+# )
+```
+
+```{r prepare-mobs-tseries-text-flags, echo = FALSE, eval = PLOT_MOBS_TSERIES}
+mobs_report_tseries_period = parse_mobs_tseries_period(
+  MOBS_STATION_REPORT_TSERIES_PERIOD %||% NULL
+)
+
+get_report_tseries_vars_for_site = function(
+    df,
+    cfg,
+    period,
+    var_params_list,
+    var_param_names = NULL,
+    var_order = NULL
+) {
+  
+  resolution = cfg$resolution %||% 'summary'
+  
+  if (resolution == 'raw') {
+    
+    data_tbl = df %>%
+      dplyr::filter(month > 0) %>%
+      dplyr::pull(data) %>%
+      dplyr::bind_rows() %>%
+      filter_mobs_tseries_period(
+        period = period
+      )
+    
+  } else {
+    
+    data_tbl = df %>%
+      dplyr::filter(month == -1) %>%
+      dplyr::pull(data) %>%
+      dplyr::bind_rows() %>%
+      filter_mobs_tseries_period(
+        period = period
+      )
+  }
+  
+  if (nrow(data_tbl) == 0) {
+    return(character())
+  }
+  
+  vars_available = unique(data_tbl$var) %>%
+    setdiff('subprecip')
+  
+  vars_available = vars_available[
+    purrr::map_lgl(
+      vars_available,
+      function(var_nm) {
+        
+        var_param_nm = if (
+          !is.null(var_param_names) &&
+            var_nm %in% names(var_param_names)
+        ) {
+          var_param_names[[var_nm]]
+        } else {
+          var_nm
+        }
+        
+        resolve_var_id(
+          var = var_param_nm,
+          var_params_list = var_params_list
+        ) %in% names(var_params_list)
+      }
+    )
+  ]
+  
+  vars_selected = if (is.null(cfg$vars)) {
+    vars_available
+  } else {
+    intersect(vars_available, cfg$vars)
+  }
+  
+  if (!is.null(var_order)) {
+    
+    vars_selected = c(
+      var_order[
+        var_order %in% vars_selected
+      ],
+      vars_selected[
+        !vars_selected %in% var_order
+      ]
+    )
+    
+  } else {
+    
+    vars_selected = vars_selected[
+      order(
+        get_var_order_index(
+          vars_selected,
+          var_params_list
+        ),
+        vars_selected
+      )
+    ]
+  }
+  
+  vars_selected
+}
+
+report_site_codes_used = intersect(
+  report_site_codes,
+  names(mobs_plotlist)
+)
+
+report_tseries_config_used = report_tseries_config[
+  report_site_codes_used
+]
+
+report_mobs_plotlist_used = mobs_plotlist[
+  report_site_codes_used
+]
+
+report_tseries_vars_shown = purrr::map2(
+  report_mobs_plotlist_used,
+  report_tseries_config_used,
+  get_report_tseries_vars_for_site,
+  period = mobs_report_tseries_period,
+  var_params_list = WRF_VAR_PARAMS_LIST,
+  var_param_names = mobs_tseries_var_params,
+  var_order = MOBS_TSERIES_VARS
+) %>%
+  purrr::list_c() %>%
+  unique()
+
+report_tseries_var_ids_shown = purrr::map_chr(
+  report_tseries_vars_shown,
+  function(var_nm) {
+
+    var_param_nm = if (
+      var_nm %in% names(mobs_tseries_var_params)
+    ) {
+      mobs_tseries_var_params[[var_nm]]
+    } else {
+      var_nm
+    }
+
+    resolve_var_id(
+      var = var_param_nm,
+      var_params_list = WRF_VAR_PARAMS_LIST
+    )
+  }
+)
+
+show_ref_tseries_note = purrr::map2_lgl(
+  report_mobs_plotlist_used,
+  report_tseries_config_used,
+  function(df, cfg) {
+
+    resolution = cfg$resolution %||% 'summary'
+
+    if (resolution == 'raw') {
+
+      data_tbl = df %>%
+        dplyr::filter(month > 0) %>%
+        dplyr::pull(data) %>%
+        dplyr::bind_rows() %>%
+        filter_mobs_tseries_period(
+          period = mobs_report_tseries_period
+        )
+
+    } else {
+
+      data_tbl = df %>%
+        dplyr::filter(month == -1) %>%
+        dplyr::pull(data) %>%
+        dplyr::bind_rows() %>%
+        filter_mobs_tseries_period(
+          period = mobs_report_tseries_period
+        )
+    }
+
+    'ref_mod' %in% names(data_tbl) &&
+      any(is.finite(data_tbl$ref_mod))
+  }
+) %>%
+  any()
+
+```
+
+```{r mobs_tseries_user_text, results='asis'}
+if (isTRUE(PLOT_MOBS_TSERIES)) {
+
+  cat('## Time series plots\n\n')
+
+  tseries_intro_sentences = c(
+    'The plots below compare modelled and observed meteorological variables at selected monitoring sites.'
+  )
+
+  if (identical(MOBS_TSERIES_OBS_STYLE, 'ribbon')) {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Observed values are shown as a shaded area and modelled values as a line.'
+    )
+  } else {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Observed and modelled values are shown as lines.'
+    )
+  }
+
+  if (isTRUE(MOBS_USE_LOCAL_TIME)) {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Time-series values are plotted using local time.'
+    )
+  } else {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Time-series values are plotted in UTC.'
+    )
+  }
+
+  if (isTRUE(show_ref_tseries_note)) {
+    tseries_intro_sentences = c(
+      tseries_intro_sentences,
+      'Where available, reference modelled values are also shown.'
+    )
+  }
+
+  cat(
+    '<p>',
+    stringr::str_c(
+      tseries_intro_sentences,
+      collapse = ' '
+    ),
+    '</p>\n\n',
+    sep = ''
+  )
+}
+```
+
+```{r mobs_report_plot_tseries, eval = PLOT_MOBS_TSERIES && exists('sites_geo_map_sub') && nrow(sites_geo_map_sub) != 0, results = 'asis'}
+
+if (length(MOBS_STATION_REPORT_TSERIES) > 0) {
+
+  # Prepare interactive MOBS time series for the report.
+  
+  period_label = format_mobs_period_label(
+    list(
+      period_start = mobs_report_tseries_period$start,
+      period_end = mobs_report_tseries_period$end
+    )
+  )
+  
+  summary_label = format_mobs_summary_label(
+    summary_time = MOBS_TSERIES_SUMMARY_TIME,
+    summary_stat = MOBS_TSERIES_SUMMARY_STAT
+  )
+  
+  
+  # Create individual interactive plot ----------------------------------------
+  
+  make_interactive_plot_block = function(
+      data,
+      var,
+      site_name,
+      var_params_list,
+      var_param_names = NULL,
+      summary_label,
+      resolution = 'summary',
+      period_label = NULL
+  ) {
+    
+    var_param_nm = if (
+      !is.null(var_param_names) &&
+        var %in% names(var_param_names)
+    ) {
+      var_param_names[[var]]
+    } else {
+      var
+    }
+    
+    plot_height = if (resolution == 'raw') {
+      340
+    } else {
+      280
+    }
+    
+    htmltools::tags$div(
+      class = 'mobs-ts-block',
+      style = paste(
+        'margin-top: 1.0em;',
+        'margin-bottom: 1.0em;'
+      ),
+      htmltools::tags$div(
+        style = paste(
+          stringr::str_glue(
+            'height: {plot_height}px;'
+          ),
+          'margin: 0;',
+          'padding: 0;',
+          'overflow: visible;'
+        ),
+        plot_mobs_tseries_interactive(
+          df = data,
+          var_nm = var,
+          site_name = site_name,
+          var_param_nm = var_param_nm,
+          var_params_list = var_params_list,
+          height = plot_height,
+          obs_style = MOBS_TSERIES_OBS_STYLE,
+          obs_alpha = MOBS_TSERIES_OBS_ALPHA,
+          ref_colour = MOBS_REF_PLOT_PARAMS[['colour']],
+          ref_linetype = MOBS_REF_PLOT_PARAMS[['linetype']],
+          ref_linewidth = MOBS_REF_PLOT_PARAMS[['linewidth']],
+          legend_labels = mobs_tseries_labels,
+          x_resolution = resolution
+        )
+      )
+    )
+  }
+  
+  
+  # Monitoring-site key -------------------------------------------------------
+  
+  site_name_col = c(
+    'site',
+    'site_name',
+    'name'
+  ) %>%
+    intersect(
+      names(sites_geo)
+    ) %>%
+    dplyr::first(
+      default = NA_character_
+    )
+  
+  site_key = sites_geo %>%
+    sf::st_drop_geometry() %>%
+    dplyr::filter(
+      code %in% names(report_mobs_plotlist_used)
+    ) %>%
+    dplyr::mutate(
+      site_name = if (!is.na(site_name_col)) {
+        as.character(.data[[site_name_col]])
+      } else {
+        NA_character_
+      }
+    ) %>%
+    dplyr::select(
+      code,
+      site_name
+    ) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(
+      code = factor(
+        code,
+        levels = names(report_mobs_plotlist_used)
+      )
+    ) %>%
+    dplyr::arrange(
+      code
+    ) %>%
+    dplyr::mutate(
+      code = as.character(code)
+    )
+
+  
+  cat(
+    stringr::str_to_sentence(
+      paste0(
+        summary_label,
+       ' data are shown for all selected sites.\n\n'
+      )
+    )
+  )
+  
+  
+  # Site-code key -------------------------------------------------------------
+  
+  if (nrow(site_key) > 0) {
+    
+    site_key_tbl_data = site_key %>%
+      dplyr::left_join(
+        sites_geo %>%
+          sf::st_drop_geometry() %>%
+          dplyr::select(
+            code,
+            dplyr::any_of(MOBS_GROUPING_VAR)
+          ) %>%
+          dplyr::distinct(),
+        by = 'code'
+      ) %>%
+      dplyr::select(
+        site_name,
+        dplyr::any_of(MOBS_GROUPING_VAR),
+        code
+      )
+    
+    site_key_tbl = site_key_tbl_data %>%
+      gt::gt() %>%
+      gt::sub_missing(
+        columns = dplyr::everything(),
+        missing_text = ''
+      ) %>%
+      gt::cols_label(
+        site_name = 'Monitoring site',
+        code = 'Code'
+      )
+    
+    if (
+      !is.null(MOBS_GROUPING_VAR) &&
+      length(MOBS_GROUPING_VAR) == 1 &&
+      MOBS_GROUPING_VAR %in% names(site_key_tbl_data)
+    ) {
+      site_key_tbl = site_key_tbl %>%
+        gt::cols_label(
+          !!rlang::sym(MOBS_GROUPING_VAR) :=
+            MOBS_GROUPING_VAR_LABEL
+        )
+    }
+    
+    site_key_tbl = site_key_tbl %>%
+      gt::tab_options(
+        data_row.padding = gt::px(3),
+        table.align = 'left'
+      )
+    
+    print(site_key_tbl)
+  }
+  
+  
+  # Site tabs and variable subtabs -------------------------------------------
+  
+  purrr::walk2(
+    report_mobs_plotlist_used,
+    report_tseries_config_used,
+    function(site_df, site_cfg) {
+      
+      site_code = unique(
+        site_df$code
+      )[1]
+      
+      site_name = site_key %>%
+        dplyr::filter(
+          code == site_code
+        ) %>%
+        dplyr::pull(
+          site_name
+        ) %>%
+        dplyr::first(
+          default = NA_character_
+        )
+      
+      site_name_heading = stringr::str_remove_all(
+        site_name,
+        fixed('.')
+      )
+      
+      site_label = if (
+        is.na(site_name_heading) ||
+        site_name_heading == '' ||
+        site_name_heading == site_code
+      ) {
+        site_code
+      } else {
+        paste0(
+          site_name_heading,
+          ' (',
+          site_code,
+          ')'
+        )
+      }
+      
+      cat(
+        '\n\n### ',
+        site_label,
+        '\n\n',
+        sep = ''
+      )
+      
+      
+      site_vars = filter_report_site_vars(
+        df = site_df,
+        cfg = site_cfg,
+        period = mobs_report_tseries_period,
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        var_param_names = mobs_tseries_var_params,
+        var_order = MOBS_TSERIES_VARS
+      )
+      
+      
+      if (nrow(site_vars) == 0) {
+        
+        cat(
+          'No time-series variables are available for this site.\n\n'
+        )
+        
+        return(invisible(NULL))
+      }
+      
+      
+      for (i in seq_len(nrow(site_vars))) {
+        
+        var_nm = site_vars$var[[i]]
+        
+        var_param_nm = if (
+          var_nm %in% names(mobs_tseries_var_params)
+        ) {
+          mobs_tseries_var_params[[var_nm]]
+        } else {
+          var_nm
+        }
+        
+        var_heading = format_var_label(
+          var = var_param_nm,
+          var_params_list = WRF_VAR_PARAMS_LIST,
+          context = 'mobs',
+          output = 'html',
+          include_units = FALSE
+        )
+        
+        p = make_interactive_plot_block(
+          data = site_vars$data[[i]],
+          var = var_nm,
+          site_name = site_name,
+          var_params_list = WRF_VAR_PARAMS_LIST,
+          var_param_names = mobs_tseries_var_params,
+          summary_label = summary_label,
+          resolution = site_vars$resolution[[i]],
+          period_label = period_label
+        )
+        
+        child_env = new.env(
+          parent = environment()
+        )
+        
+        child_env$var_heading = var_heading
+        child_env$p = p
+        
+        
+        child_text = c(
+          '#### `r var_heading`',
+          '',
+          '```{r, echo=FALSE}',
+          'p',
+          '```',
+          ''
+        )
+        
+        
+        cat(
+          knitr::knit_child(
+            text = child_text,
+            envir = child_env,
+            quiet = TRUE
+          ),
+          sep = '\n'
+        )
+      }
+    }
+  )
+
+}
+```
+
+```{r modStats, include=FALSE, eval=EVALUATE_MOBS}
+
+# Prepare regular MOBS data for evaluation.
+# Retain the first calendar year to exclude the additional WRF
+# boundary timestamp at the beginning of the following year.
+
+mobs_regular_eval = mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$regular
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    yr = suppressWarnings(
+      min(lubridate::year(df$date), na.rm = TRUE)
+    )
+
+    df %>%
+      dplyr::filter(
+        lubridate::year(date) == yr,
+        var %in% MOBS_EVAL_VARS
+      ) %>%
+      dplyr::mutate(
+        # Convert temperatures from degrees Celsius to Kelvin.
+        mod = dplyr::if_else(
+          var %in% c('T2', 'td2') & is.finite(mod),
+          mod + 273.15,
+          mod
+        ),
+        obs = dplyr::if_else(
+          var %in% c('T2', 'td2') & is.finite(obs),
+          obs + 273.15,
+          obs
+        ),
+        # Mask observations wherever modelled data are missing.
+        obs = dplyr::if_else(
+          is.na(mod),
+          NA_real_,
+          obs
+        )
+      )
+  })
+
+
+# Calculate accumulated precipitation for each site.
+
+test_mobs_acc_precip = mobs_regular_eval %>%
+  purrr::map_dfr(function(df) {
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    sub = df %>%
+      dplyr::filter(var == 'subprecip')
+
+    if (nrow(sub) == 0) {
+      return(NULL)
+    }
+
+    all_obs_na = all(is.na(sub$obs))
+
+    tibble::tibble(
+      code = dplyr::first(sub$code),
+      date = max(sub$date, na.rm = TRUE),
+      var = 'subprecip',
+      mod = if (all_obs_na) NA_real_ else sum(sub$mod, na.rm = TRUE),
+      obs = if (all_obs_na) NA_real_ else sum(sub$obs, na.rm = TRUE)
+    )
+  })
+
+
+# Exclude precipitation and wind direction from ordinary modstats.
+
+mobs_regular_eval_stats = mobs_regular_eval %>%
+  purrr::map(function(df) {
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        !var %in% c('precip', 'subprecip', 'wd')
+      )
+  })
+
+
+# Calculate temporal modstats for each site.
+
+test_mobs_regular_site_stats = mobs_regular_eval_stats %>%
+  purrr::map_dfr(
+    calculate_modstats,
+    modstats = MODSTATS_STATS,
+    type = c('code', 'var'),
+    pretty_format = FALSE
+  ) %>%
+  dplyr::filter(n > 0) %>%
+  dplyr::group_by(var)
+
+
+# Calculate precipitation modstats separately.
+
+test_mobs_site_precip_stats = test_mobs_acc_precip %>%
+  calculate_modstats(
+    modstats = c('MB', 'NMB'),
+    type = c('code', 'var'),
+    pretty_format = FALSE
+  )
+
+
+# Combine regular site-level modstats and precipitation modstats.
+
+test_mobs_regular_site_stats = test_mobs_regular_site_stats %>%
+  dplyr::ungroup() %>%
+  dplyr::bind_rows(test_mobs_site_precip_stats)
+
+
+# Add site metadata.
+
+site_meta_for_stats = sites_geo %>%
+  sf::st_drop_geometry() %>%
+  dplyr::select(
+    dplyr::any_of(c(
+      'code',
+      'site',
+      'station',
+      MOBS_GROUPING_VAR
+    ))
+  ) %>%
+  dplyr::distinct(
+    code,
+    .keep_all = TRUE
+  )
+
+
+test_mobs_regular_site_stats = test_mobs_regular_site_stats %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  ) %>%
+  dplyr::mutate(
+    run = 'Test'
+  ) %>%
+  dplyr::relocate(
+    run,
+    code,
+    dplyr::any_of(c(
+      'site',
+      'station',
+      MOBS_GROUPING_VAR
+    )),
+    var
+  ) %>%
+  format_mobs_group_labels(
+    grouping_var = MOBS_GROUPING_VAR,
+    missing_label = 'All sites'
+  ) %>%
+  dplyr::arrange(
+    code,
+    dplyr::across(
+      dplyr::any_of(c('site', 'station'))
+    ),
+    get_var_order_index(
+      var,
+      WRF_VAR_PARAMS_LIST
+    ),
+    var
+  )
+
+
+# Save site-level modstats by variable.
+
+if (isTRUE(SAVE_STATIC_OUTPUTS)) {
+
+  test_mobs_regular_site_stats %>%
+    dplyr::group_by(var) %>%
+    dplyr::group_split() %>%
+    purrr::walk(function(df) {
+
+      this_var = unique(df$var)
+
+      readr::write_csv(
+        df,
+        fs::path(
+          tables_pth_out,
+          stringr::str_glue(
+            'Mobs_modstats_{this_var}.csv'
+          )
+        )
+      )
+    })
+}
+
+
+# Calculate modelled-period means for each site.
+
+test_mobs_regular_site_means = mobs_regular_eval_stats %>%
+  purrr::map_dfr(
+    summarise_mobs,
+    avg_time = 'period',
+    summary_stat = 'mean',
+    data_thresh = MOBS_THRESHOLD,
+    drop_na_mod = TRUE,
+    start_date = NULL,
+    end_date = NULL
+  ) %>%
+  dplyr::bind_rows(
+    test_mobs_acc_precip
+  )
+
+
+# Prepare interval MOBS data for evaluation.
+# WRF currently uses regular observations only.
+
+mobs_interval_eval = mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$interval
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        var %in% MOBS_EVAL_VARS
+      ) %>%
+      dplyr::mutate(
+        interval_hours = as.numeric(
+          difftime(
+            end_date,
+            start_date,
+            units = 'hours'
+          )
+        ),
+        obs = dplyr::if_else(
+          is.na(mod),
+          NA_real_,
+          obs
+        )
+      )
+  })
+
+
+# Calculate duration-weighted modelled-period means for interval data.
+
+test_mobs_interval_site_means = mobs_interval_eval %>%
+  purrr::map_dfr(function(df) {
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        is.finite(mod),
+        is.finite(obs),
+        is.finite(interval_hours),
+        interval_hours > 0
+      ) %>%
+      dplyr::group_by(
+        code,
+        var
+      ) %>%
+      dplyr::summarise(
+        mod = stats::weighted.mean(
+          mod,
+          w = interval_hours
+        ),
+        obs = stats::weighted.mean(
+          obs,
+          w = interval_hours
+        ),
+        .groups = 'drop'
+      )
+  })
+
+
+# Check that site-variable combinations occur in only one data type.
+
+if (
+  nrow(test_mobs_regular_site_means) > 0 &&
+  nrow(test_mobs_interval_site_means) > 0
+) {
+
+  duplicate_mobs_site_vars = dplyr::inner_join(
+    test_mobs_regular_site_means %>%
+      dplyr::distinct(code, var),
+    test_mobs_interval_site_means %>%
+      dplyr::distinct(code, var),
+    by = c('code', 'var')
+  )
+
+  if (nrow(duplicate_mobs_site_vars) > 0) {
+
+    duplicate_mobs_site_vars_text =
+      duplicate_mobs_site_vars %>%
+      dplyr::transmute(
+        site_var = paste0(code, ' (', var, ')')
+      ) %>%
+      dplyr::pull(site_var) %>%
+      toString()
+
+    stop(
+      paste0(
+        'The following Test site-variable combinations occur in ',
+        'both regular and interval MOBS data: ',
+        duplicate_mobs_site_vars_text,
+        '. Each site-variable combination must use only one ',
+        'observation data type.'
+      ),
+      call. = FALSE
+    )
+  }
+}
+
+
+# Combine regular and interval site means.
+
+test_mobs_site_means = dplyr::bind_rows(
+  test_mobs_regular_site_means,
+  test_mobs_interval_site_means
+) %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  )
+
+
+# Calculate spatial modstats across sites.
+
+test_mobs_stats = calculate_modstats(
+  test_mobs_site_means,
+  modstats = MODSTATS_STATS,
+  type = 'var',
+  pretty_format = FALSE
+)
+
+
+if (
+  !is.null(MOBS_GROUPING_VAR) &&
+  MOBS_GROUPING_VAR %in% names(test_mobs_site_means)
+) {
+
+  test_mobs_stats = calculate_modstats(
+    test_mobs_site_means,
+    modstats = MODSTATS_STATS,
+    type = unique(c('var', MOBS_GROUPING_VAR)),
+    pretty_format = FALSE
+  ) %>%
+    dplyr::bind_rows(
+      test_mobs_stats
+    ) %>%
+    dplyr::filter(
+      n > 0
+    ) %>%
+    dplyr::arrange(
+      get_var_order_index(
+        var,
+        WRF_VAR_PARAMS_LIST
+      ),
+      var
+    ) %>%
+    dplyr::relocate(
+      dplyr::any_of(MOBS_GROUPING_VAR),
+      .after = var
+    ) %>%
+    format_mobs_group_labels(
+      grouping_var = MOBS_GROUPING_VAR,
+      missing_label = 'All sites'
+    )
+}
+
+
+# Save spatial modstats.
+
+if (isTRUE(SAVE_STATIC_OUTPUTS)) {
+
+  readr::write_csv(
+    test_mobs_stats,
+    fs::path(
+      tables_pth_out,
+      MOBS_STATS_FNAME
+    )
+  )
+}
+
+
+# Prepare spatial modstats for the report table.
+
+test_mobs_stats_table = test_mobs_stats %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+    run = test_label
+  ) %>%
+  dplyr::relocate(
+    run,
+    var,
+    dplyr::any_of(MOBS_GROUPING_VAR)
+  ) %>%
+  dplyr::arrange(
+    get_var_order_index(
+      var,
+      WRF_VAR_PARAMS_LIST
+    ),
+    var,
+    dplyr::across(
+      dplyr::any_of(MOBS_GROUPING_VAR)
+    )
+  )
+```
+
+```{r mobs_report_stats_comp, include=FALSE,   eval=isTRUE(EVALUATE_MOBS) && !is.null(REF_MOBS_DIR) && isTRUE(testref_period_overlap)}
+
+# Prepare Test and Reference MOBS data for comparison over their
+# common modelled period.
+
+# Test regular MOBS data.
+
+testref_test_regular_eval = mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$regular
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        date >= testref_start_date,
+        date < testref_end_date,
+        var %in% MOBS_EVAL_VARS
+      ) %>%
+      dplyr::mutate(
+        mod = dplyr::if_else(
+          var %in% c('T2', 'td2') & is.finite(mod),
+          mod + 273.15,
+          mod
+        ),
+        obs = dplyr::if_else(
+          var %in% c('T2', 'td2') & is.finite(obs),
+          obs + 273.15,
+          obs
+        ),
+        obs = dplyr::if_else(
+          is.na(mod),
+          NA_real_,
+          obs
+        )
+      )
+  })
+
+
+# Reference regular MOBS data.
+
+testref_ref_regular_eval = ref_mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$regular
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        date >= testref_start_date,
+        date < testref_end_date,
+        var %in% MOBS_EVAL_VARS
+      ) %>%
+      dplyr::mutate(
+        mod = dplyr::if_else(
+          var %in% c('T2', 'td2') & is.finite(mod),
+          mod + 273.15,
+          mod
+        ),
+        obs = dplyr::if_else(
+          var %in% c('T2', 'td2') & is.finite(obs),
+          obs + 273.15,
+          obs
+        ),
+        obs = dplyr::if_else(
+          is.na(mod),
+          NA_real_,
+          obs
+        )
+      )
+  })
+
+
+# Test interval MOBS data.
+
+testref_test_interval_eval = mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$interval
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        start_date >= testref_start_date,
+        end_date <= testref_end_date,
+        var %in% MOBS_EVAL_VARS
+      ) %>%
+      dplyr::mutate(
+        interval_hours = as.numeric(
+          difftime(
+            end_date,
+            start_date,
+            units = 'hours'
+          )
+        ),
+        obs = dplyr::if_else(
+          is.na(mod),
+          NA_real_,
+          obs
+        )
+      )
+  })
+
+
+# Reference interval MOBS data.
+
+testref_ref_interval_eval = ref_mobs_list %>%
+  purrr::map(function(mobs) {
+
+    df = mobs$interval
+
+    if (is.null(df) || nrow(df) == 0) {
+      return(NULL)
+    }
+
+    df %>%
+      dplyr::filter(
+        start_date >= testref_start_date,
+        end_date <= testref_end_date,
+        var %in% MOBS_EVAL_VARS
+      ) %>%
+      dplyr::mutate(
+        interval_hours = as.numeric(
+          difftime(
+            end_date,
+            start_date,
+            units = 'hours'
+          )
+        ),
+        obs = dplyr::if_else(
+          is.na(mod),
+          NA_real_,
+          obs
+        )
+      )
+  })
+
+# Combine MOBS lists into data frames with consistent schemas.
+
+testref_test_regular_df = bind_mobs_rows(
+  testref_test_regular_eval
+)
+
+testref_ref_regular_df = bind_mobs_rows(
+  testref_ref_regular_eval
+)
+
+testref_test_interval_df = bind_mobs_rows(
+  testref_test_interval_eval,
+  interval = TRUE
+)
+
+testref_ref_interval_df = bind_mobs_rows(
+  testref_ref_interval_eval,
+  interval = TRUE
+)
+
+# Match regular Test and Reference MOBS records so that comparison
+# statistics use the same sites, variables and timestamps.
+
+testref_regular_pairs = dplyr::inner_join(
+  testref_test_regular_df %>%
+    dplyr::select(
+      code,
+      date,
+      var,
+      test_obs = obs,
+      test_mod = mod
+    ),
+  testref_ref_regular_df %>%
+    dplyr::select(
+      code,
+      date,
+      var,
+      ref_obs = obs,
+      ref_mod = mod
+    ),
+  by = c(
+    'code',
+    'date',
+    'var'
+  )
+) %>%
+  dplyr::filter(
+    is.finite(test_obs),
+    is.finite(test_mod),
+    is.finite(ref_obs),
+    is.finite(ref_mod)
+  )
+
+# Test and Reference should contain the same observation for each
+# matched site-variable-timestamp combination.
+
+testref_obs_mismatch = testref_regular_pairs %>%
+  dplyr::filter(
+    !dplyr::near(
+      test_obs,
+      ref_obs
+    )
+  )
+
+if (nrow(testref_obs_mismatch) > 0) {
+
+  stop(
+    paste0(
+      'Test and Reference MOBS data contain different observation ',
+      'values for ',
+      nrow(testref_obs_mismatch),
+      ' matched regular record(s).'
+    ),
+    call. = FALSE
+  )
+}
+
+# Create paired Test and Reference regular evaluation datasets.
+
+testref_test_regular_paired = testref_regular_pairs %>%
+  dplyr::transmute(
+    code,
+    date,
+    var,
+    obs = test_obs,
+    mod = test_mod
+  )
+
+testref_ref_regular_paired = testref_regular_pairs %>%
+  dplyr::transmute(
+    code,
+    date,
+    var,
+    obs = ref_obs,
+    mod = ref_mod
+  )
+
+# Match interval Test and Reference MOBS records so that comparison
+# statistics use the same sites, variables and observation intervals.
+
+testref_interval_pairs = dplyr::inner_join(
+  testref_test_interval_df %>%
+    dplyr::select(
+      code,
+      start_date,
+      end_date,
+      var,
+      test_obs = obs,
+      test_mod = mod
+    ),
+  testref_ref_interval_df %>%
+    dplyr::select(
+      code,
+      start_date,
+      end_date,
+      var,
+      ref_obs = obs,
+      ref_mod = mod
+    ),
+  by = c(
+    'code',
+    'start_date',
+    'end_date',
+    'var'
+  )
+) %>%
+  dplyr::filter(
+    is.finite(test_obs),
+    is.finite(test_mod),
+    is.finite(ref_obs),
+    is.finite(ref_mod)
+  ) %>%
+  dplyr::mutate(
+    interval_hours = as.numeric(
+      difftime(
+        end_date,
+        start_date,
+        units = 'hours'
+      )
+    )
+  ) %>%
+  dplyr::filter(
+    is.finite(interval_hours),
+    interval_hours > 0
+  )
+
+
+# Test and Reference should contain the same observation for each
+# matched site-variable-interval combination.
+
+testref_interval_obs_mismatch = testref_interval_pairs %>%
+  dplyr::filter(
+    !dplyr::near(
+      test_obs,
+      ref_obs
+    )
+  )
+
+if (nrow(testref_interval_obs_mismatch) > 0) {
+
+  stop(
+    paste0(
+      'Test and Reference MOBS data contain different observation ',
+      'values for ',
+      nrow(testref_interval_obs_mismatch),
+      ' matched interval record(s).'
+    ),
+    call. = FALSE
+  )
+}
+
+
+# Create paired Test and Reference interval evaluation datasets.
+
+testref_test_interval_paired = testref_interval_pairs %>%
+  dplyr::transmute(
+    code,
+    start_date,
+    end_date,
+    var,
+    obs = test_obs,
+    mod = test_mod,
+    interval_hours
+  )
+
+testref_ref_interval_paired = testref_interval_pairs %>%
+  dplyr::transmute(
+    code,
+    start_date,
+    end_date,
+    var,
+    obs = ref_obs,
+    mod = ref_mod,
+    interval_hours
+  )
+
+# Calculate paired temporal modstats for regular MOBS data.
+
+testref_test_regular_site_stats = calculate_modstats(
+  testref_test_regular_paired,
+  modstats = MODSTATS_STATS,
+  type = c('code', 'var'),
+  pretty_format = FALSE
+) %>%
+  dplyr::filter(
+    n > 0
+  )
+
+testref_ref_regular_site_stats = calculate_modstats(
+  testref_ref_regular_paired,
+  modstats = MODSTATS_STATS,
+  type = c('code', 'var'),
+  pretty_format = FALSE
+) %>%
+  dplyr::filter(
+    n > 0
+  )
+
+
+# Add site metadata and run labels.
+
+testref_test_regular_site_stats = testref_test_regular_site_stats %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  ) %>%
+  dplyr::mutate(
+    run = test_label
+  )
+
+testref_ref_regular_site_stats = testref_ref_regular_site_stats %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  ) %>%
+  dplyr::mutate(
+    run = ref_label
+  )
+
+
+# Combine paired temporal site statistics.
+
+testref_mobs_site_stats = dplyr::bind_rows(
+  testref_test_regular_site_stats,
+  testref_ref_regular_site_stats
+) %>%
+  dplyr::relocate(
+    run,
+    code,
+    dplyr::any_of(
+      c(
+        'site',
+        'station',
+        MOBS_GROUPING_VAR
+      )
+    ),
+    var
+  ) %>%
+  format_mobs_group_labels(
+    grouping_var = MOBS_GROUPING_VAR,
+    missing_label = 'All sites'
+  ) %>%
+  dplyr::arrange(
+    get_var_order_index(
+      var,
+      WRF_VAR_PARAMS_LIST
+    ),
+    var,
+    code,
+    run
+  )
+
+# Calculate paired regular site means.
+
+testref_test_regular_site_means =
+  testref_test_regular_paired %>%
+  dplyr::group_by(
+    code,
+    var
+  ) %>%
+  dplyr::summarise(
+    obs = mean(
+      obs,
+      na.rm = TRUE
+    ),
+    mod = mean(
+      mod,
+      na.rm = TRUE
+    ),
+    .groups = 'drop'
+  )
+
+testref_ref_regular_site_means =
+  testref_ref_regular_paired %>%
+  dplyr::group_by(
+    code,
+    var
+  ) %>%
+  dplyr::summarise(
+    obs = mean(
+      obs,
+      na.rm = TRUE
+    ),
+    mod = mean(
+      mod,
+      na.rm = TRUE
+    ),
+    .groups = 'drop'
+  )
+
+# Calculate paired duration-weighted interval site means.
+
+testref_test_interval_site_means =
+  testref_test_interval_paired %>%
+  dplyr::group_by(
+    code,
+    var
+  ) %>%
+  dplyr::summarise(
+    obs = stats::weighted.mean(
+      obs,
+      w = interval_hours
+    ),
+    mod = stats::weighted.mean(
+      mod,
+      w = interval_hours
+    ),
+    .groups = 'drop'
+  )
+
+testref_ref_interval_site_means =
+  testref_ref_interval_paired %>%
+  dplyr::group_by(
+    code,
+    var
+  ) %>%
+  dplyr::summarise(
+    obs = stats::weighted.mean(
+      obs,
+      w = interval_hours
+    ),
+    mod = stats::weighted.mean(
+      mod,
+      w = interval_hours
+    ),
+    .groups = 'drop'
+  )
+
+# Check that paired site-variable combinations occur in only one
+# MOBS data type.
+
+if (
+  nrow(testref_test_regular_site_means) > 0 &&
+  nrow(testref_test_interval_site_means) > 0
+) {
+
+  duplicate_testref_site_vars = dplyr::inner_join(
+    testref_test_regular_site_means %>%
+      dplyr::distinct(
+        code,
+        var
+      ),
+    testref_test_interval_site_means %>%
+      dplyr::distinct(
+        code,
+        var
+      ),
+    by = c(
+      'code',
+      'var'
+    )
+  )
+
+  if (nrow(duplicate_testref_site_vars) > 0) {
+
+    duplicate_testref_site_vars_text =
+      duplicate_testref_site_vars %>%
+      dplyr::transmute(
+        site_var = paste0(
+          code,
+          ' (',
+          var,
+          ')'
+        )
+      ) %>%
+      dplyr::pull(site_var) %>%
+      toString()
+
+    stop(
+      paste0(
+        'The following paired Test/Reference site-variable ',
+        'combinations occur in both regular and interval MOBS data: ',
+        duplicate_testref_site_vars_text,
+        '. Each site-variable combination must use only one ',
+        'observation data type.'
+      ),
+      call. = FALSE
+    )
+  }
+}
+
+# Combine regular and interval paired site means.
+
+testref_test_site_means = dplyr::bind_rows(
+  testref_test_regular_site_means,
+  testref_test_interval_site_means
+) %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  )
+
+testref_ref_site_means = dplyr::bind_rows(
+  testref_ref_regular_site_means,
+  testref_ref_interval_site_means
+) %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  )
+
+# Calculate spatial modstats over the paired Test/Reference data.
+
+testref_test_stats = calculate_modstats(
+  testref_test_site_means,
+  modstats = MODSTATS_STATS,
+  type = 'var',
+  pretty_format = FALSE
+)  %>%
+  dplyr::filter(
+    n > 0
+  )
+
+testref_ref_stats = calculate_modstats(
+  testref_ref_site_means,
+  modstats = MODSTATS_STATS,
+  type = 'var',
+  pretty_format = FALSE
+) %>%
+  dplyr::filter(
+    n > 0
+  )
+
+if (
+  !is.null(MOBS_GROUPING_VAR) &&
+  MOBS_GROUPING_VAR %in% names(testref_test_site_means)
+) {
+
+  testref_test_stats = calculate_modstats(
+    testref_test_site_means,
+    modstats = MODSTATS_STATS,
+    type = unique(
+      c(
+        'var',
+        MOBS_GROUPING_VAR
+      )
+    ),
+    pretty_format = FALSE
+  ) %>%
+    dplyr::filter(
+      n > 0
+    ) %>%
+    dplyr::bind_rows(
+      testref_test_stats
+    )
+  
+  testref_ref_stats = calculate_modstats(
+    testref_ref_site_means,
+    modstats = MODSTATS_STATS,
+    type = unique(
+      c(
+        'var',
+        MOBS_GROUPING_VAR
+      )
+    ),
+    pretty_format = FALSE
+  ) %>%
+    dplyr::filter(
+      n > 0
+    ) %>%
+    dplyr::bind_rows(
+      testref_ref_stats
+    )
+}
+
+# Combine Test and Reference spatial modstats for reporting.
+
+testref_mobs_stats_table = dplyr::bind_rows(
+  testref_test_stats %>%
+    dplyr::mutate(
+      run = test_label
+    ),
+  testref_ref_stats %>%
+    dplyr::mutate(
+      run = ref_label
+    )
+) %>%
+  dplyr::relocate(
+    run,
+    var,
+    dplyr::any_of(MOBS_GROUPING_VAR)
+  ) %>%
+  format_mobs_group_labels(
+    grouping_var = MOBS_GROUPING_VAR
+  ) %>%
+  dplyr::arrange(
+    get_var_order_index(
+      var,
+      WRF_VAR_PARAMS_LIST
+    ),
+    var,
+    dplyr::across(
+      dplyr::any_of(MOBS_GROUPING_VAR)
+    ),
+    run
+  )
+```
+
+```{r mobs_modstats_helper_flags}
+
+mobs_temporal_modstats_available = FALSE
+mobs_spatial_modstats_available = FALSE
+mobs_modstats_available = FALSE
+
+testref_mobs_temporal_modstats_available = FALSE
+testref_mobs_spatial_modstats_available = FALSE
+testref_mobs_modstats_available = FALSE
+
+if (isTRUE(EVALUATE_MOBS)) {
+
+  mobs_temporal_modstats_available =
+    exists('test_mobs_regular_site_stats') &&
+    !is.null(test_mobs_regular_site_stats) &&
+    nrow(test_mobs_regular_site_stats) > 0
+
+  mobs_spatial_modstats_available =
+    exists('test_mobs_stats_table') &&
+    !is.null(test_mobs_stats_table) &&
+    nrow(test_mobs_stats_table) > 0
+
+  mobs_modstats_available =
+    mobs_temporal_modstats_available ||
+    mobs_spatial_modstats_available
+
+  testref_mobs_temporal_modstats_available =
+    !is.null(REF_MOBS_DIR) &&
+    isTRUE(testref_period_overlap) &&
+    exists('testref_mobs_site_stats') &&
+    !is.null(testref_mobs_site_stats) &&
+    nrow(testref_mobs_site_stats) > 0
+
+  testref_mobs_spatial_modstats_available =
+    !is.null(REF_MOBS_DIR) &&
+    isTRUE(testref_period_overlap) &&
+    exists('testref_mobs_stats_table') &&
+    !is.null(testref_mobs_stats_table) &&
+    nrow(testref_mobs_stats_table) > 0
+
+  testref_mobs_modstats_available =
+    testref_mobs_temporal_modstats_available ||
+    testref_mobs_spatial_modstats_available
+}
+
+```
+
+```{r mobs_modstats_user_text, eval=mobs_modstats_available && PRINT_MODSTATS_TABLES, results='asis'}
+
+cat('## Model evaluation statistics\n\n')
+
+modstats_stats_for_text = MODSTATS_STATS %>%
+  setdiff('n')
+
+modstats_stat_labels = c(
+  MB = 'mean bias (MB)',
+  NMB = 'normalised mean bias (NMB)',
+  RMSE = 'root mean square error (RMSE)',
+  FAC2 = 'fraction of modelled-observed pairs within a factor of two (FAC2)',
+  r_pearson = 'Pearson correlation coefficient (r)',
+  r_spearman = 'Spearman rank correlation coefficient (&rho;)'
+)
+
+modstats_stats_text = MODSTATS_STATS %>%
+  setdiff('n') %>%
+  modstats_stat_labels[.] %>%
+  unname() %>%
+  format_elements_to_print()
+
+modstats_intro_sentences = c(
+  'The modelled variables have been evaluated against observations using commonly used model evaluation statistics.',
+  glue::glue(
+    'The statistics reported in the plots and tables are {modstats_stats_text}.'
+  )
+)
+
+if (REPORT_STYLE == 'interactive') {
+
+  modstats_intro_sentences = c(
+    modstats_intro_sentences,
+    'Two complementary types of evaluation are shown.',
+    'Site-level temporal statistics are calculated separately for each monitoring site and variable using the paired modelled and observed time series.',
+    'Modelled-period mean spatial statistics are calculated after averaging each site over the modelled period, and therefore describe how well the model reproduces spatial differences across the monitoring network.',
+    glue::glue(
+      'For regular observations, only site-variable pairs with data capture >= {MOBS_THRESHOLD}% are included in the modelled-period mean spatial evaluation.'
+    ),
+    'The temporal site-level statistics are calculated from the available paired regular time series at each site.'
+  )
+
+} else {
+
+  modstats_intro_sentences = c(
+    modstats_intro_sentences,
+    'Modelled-period mean spatial statistics are shown below.',
+    'These statistics are calculated after averaging each site over the modelled period, and therefore describe how well the model reproduces spatial differences across the monitoring network.',
+    glue::glue(
+      'For regular observations, only site-variable pairs with data capture &ge; {MOBS_THRESHOLD}% are included in the modelled-period mean spatial evaluation.'
+    ),
+    'Site-level temporal statistics are also calculated separately for each monitoring site and variable using the paired modelled and observed time series, and are available in the accompanying CSV output.'
+  )
+}
+
+if ('subprecip' %in% MOBS_EVAL_VARS) {
+
+  modstats_intro_sentences = c(
+    modstats_intro_sentences,
+    'Precipitation is evaluated separately using accumulated totals over the modelled period, with MB and NMB reported for each site.'
+  )
+}
+
+if ('wd' %in% MOBS_EVAL_VARS) {
+
+  modstats_intro_sentences = c(
+    modstats_intro_sentences,
+    'Wind direction is excluded from the model evaluation statistics.'
+  )
+}
+
+if (!is.null(MOBS_GROUPING_VAR)) {
+
+  modstats_intro_sentences = c(
+    modstats_intro_sentences,
+    'Where a site grouping variable is available, the spatial evaluation statistics are also shown by site group.'
+  )
+}
+
+modstats_units_sentences = c(
+  'MB and RMSE have the same units as the meteorological variable, while NMB is expressed as a percentage.',
+  'FAC2 and the correlation coefficients are dimensionless.'
+)
+
+cat(
+  '<p>',
+  stringr::str_c(
+    modstats_intro_sentences,
+    collapse = ' '
+  ),
+  '</p>\n\n',
+  '<p>',
+  stringr::str_c(
+    modstats_units_sentences,
+    collapse = ' '
+  ),
+  '</p>\n\n',
+  sep = ''
+)
+```
+
+```{r mobs_testref_temporal_modstats_user_text, eval=testref_mobs_temporal_modstats_available && PRINT_MODSTATS_TABLES, results = 'asis'}
+if (REPORT_STYLE == 'interactive') {
+
+  # The {.tabset} attribute is required for the temporal/spatial tabs
+  # in the interactive report.
+  cat(
+    '### ',
+    test_label,
+    '/',
+    ref_label,
+    ' comparison {.tabset}\n\n',
+    sep = ''
+  )
+
+  cat('#### Temporal statistics {.unlisted}\n\n')
+
+  testref_temporal_modstats_sentences = c(
+    paste0(
+      'The table below compares site-level temporal model evaluation statistics ',
+      'for the ',
+      test_label,
+      ' and ',
+      ref_label,
+      ' runs.'
+    ),
+    paste0(
+      'Statistics are calculated separately for each monitoring site and variable ',
+      'using regular observations from the common ',
+      test_label,
+      '/',
+      ref_label,
+      ' period.'
+    ),
+    paste0(
+      'Only modelled-observed records available for both runs are included, ',
+      'ensuring that the ',
+      test_label,
+      ' and ',
+      ref_label,
+      ' statistics are calculated from the same observations and timestamps.'
+    ),
+    paste0(
+      'Rows are stacked by site and variable so that the ',
+      test_label,
+      ' and ',
+      ref_label,
+      ' statistics can be compared directly.'
+    )
+  )
+
+  cat(
+    '<p>',
+    stringr::str_c(
+      testref_temporal_modstats_sentences,
+      collapse = ' '
+    ),
+    '</p>\n\n',
+    sep = ''
+  )
+}
+```
+
+```{r print_mobs_testref_temporal_modstats, eval=testref_mobs_temporal_modstats_available && REPORT_STYLE == 'interactive' && PRINT_MODSTATS_TABLES, results = 'asis'}
+make_modstats_dt(
+  testref_mobs_site_stats,
+  var_params_list = WRF_VAR_PARAMS_LIST,
+  var_param_names = mobs_var_params,
+  var_fill = MOBS_MODSTATS_VAR_FILL,
+  caption = 'Site-level temporal model evaluation statistics for test and reference runs.',
+  include_run = TRUE,
+  grouping_var = MOBS_GROUPING_VAR,
+  grouping_var_label = MOBS_GROUPING_VAR_LABEL
+)
+```
+
+```{r mobs_testref_spatial_modstats_user_text, eval=testref_mobs_spatial_modstats_available && PRINT_MODSTATS_TABLES, results = 'asis'}
+if (REPORT_STYLE == 'interactive') {
+
+  cat('#### Spatial statistics {.unlisted}\n\n')
+
+} else {
+
+  cat(
+    '### ',
+    test_label,
+    '/',
+    ref_label,
+    ' spatial comparison\n\n',
+    sep = ''
+  )
+}
+
+testref_spatial_modstats_sentences = c(
+  paste0(
+    'The table below compares spatial evaluation statistics for the ',
+    test_label,
+    ' and ',
+    ref_label,
+    ' runs.'
+  ),
+  paste0(
+    'The statistics are based on modelled-period mean values calculated ',
+    'over the common ',
+    test_label,
+    '/',
+    ref_label,
+    ' period.'
+  ),
+  paste0(
+    'Only observations available for both runs are used, ensuring that the ',
+    test_label,
+    ' and ',
+    ref_label,
+    ' statistics are based on the same monitoring sites, variables and ',
+    'observation periods.'
+  ),
+  'For regular observations, the site means are calculated from the matched modelled-observed records.'
+)
+
+if ('subprecip' %in% MOBS_EVAL_VARS) {
+
+  testref_spatial_modstats_sentences = c(
+    testref_spatial_modstats_sentences,
+    'Precipitation statistics are calculated using accumulated precipitation over the common comparison period.'
+  )
+}
+
+if (!is.null(MOBS_GROUPING_VAR)) {
+
+  testref_spatial_modstats_sentences = c(
+    testref_spatial_modstats_sentences,
+    'Statistics are shown for all sites together and, where possible, by site group.'
+  )
+}
+
+cat(
+  '<p>',
+  stringr::str_c(
+    testref_spatial_modstats_sentences,
+    collapse = ' '
+  ),
+  '</p>\n\n',
+  sep = ''
+)
+```
+
+```{r print_mobs_testref_spatial_modstats_user_text,eval=testref_mobs_spatial_modstats_available && PRINT_MODSTATS_TABLES, results = 'asis'}
+if (REPORT_STYLE == 'interactive') {
+
+  make_modstats_dt(
+    testref_mobs_stats_table,
+    var_params_list = WRF_VAR_PARAMS_LIST,
+    var_param_names = mobs_var_params,
+    var_fill = MOBS_MODSTATS_VAR_FILL,
+    caption = 'Spatial model evaluation statistics for test and reference runs based on modelled-period mean values.',
+    include_run = TRUE,
+    grouping_var = MOBS_GROUPING_VAR,
+    grouping_var_label = MOBS_GROUPING_VAR_LABEL
+  )
+
+} else {
+
+  make_modstats_gt(
+    testref_mobs_stats_table,
+    var_params_list = WRF_VAR_PARAMS_LIST,
+    var_param_names = mobs_var_params,
+    var_fill = MOBS_MODSTATS_VAR_FILL,
+    caption = 'Spatial model evaluation statistics for test and reference runs based on modelled-period mean values.',
+    include_run = TRUE,
+    grouping_var = MOBS_GROUPING_VAR,
+    grouping_var_label = MOBS_GROUPING_VAR_LABEL
+  )
+}
+```
+
+```{r plot_static_scatter_plots, eval = isTRUE(PLOT_MOBS_SCATTER_PLOTS) && isTRUE(mobs_spatial_modstats_available)}
+scatter_base = test_mobs_site_means
+
+if (
+  !is.null(MOBS_GROUPING_VAR) &&
+  MOBS_GROUPING_VAR %in% names(sites_geo)
+) {
+  
+  mobs_grouping_meta = sites_geo %>%
+    sf::st_drop_geometry() %>%
+    dplyr::select(
+      code,
+      dplyr::any_of(
+        c(
+          'site',
+          'station',
+          MOBS_GROUPING_VAR
+        )
+      )
+    ) %>%
+    dplyr::distinct(
+      code,
+      .keep_all = TRUE
+    )
+  
+  scatter_base = scatter_base %>%
+    dplyr::select(
+      -dplyr::any_of(
+        c(
+          'site',
+          'station',
+          MOBS_GROUPING_VAR
+        )
+      )
+    ) %>%
+    dplyr::left_join(
+      mobs_grouping_meta,
+      by = 'code'
+    ) %>%
+    format_mobs_group_labels(
+      grouping_var = MOBS_GROUPING_VAR
+    )
+}
+
+scatter_grouped = scatter_base %>%
+  dplyr::group_by(var)
+
+scatter_group_keys = scatter_grouped %>%
+  dplyr::group_keys() %>%
+  dplyr::pull(var)
+
+```
+
+```{r, save_scatter_plots_to_pdf, eval=PLOT_MOBS_SCATTER_PLOTS && SAVE_STATIC_OUTPUTS}
+
+scatter_plots = scatter_grouped %>%
+  dplyr::group_split() %>%
+  purrr::map2(
+    scatter_group_keys,
+    function(df, var_nm) {
+      
+      plot_mobs_scatter(
+        mobs_data = df,
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        var_param_nm = mobs_var_params[[var_nm]],
+        colours = if (!is.null(MOBS_GROUPING_VAR)) {
+          MOBS_GROUPING_VAR_COLOURS
+        } else {
+          NULL
+        },
+        point_colour = MOBS_SCATTER_POINT_COLOUR,
+        group_column = MOBS_GROUPING_VAR,
+        facet = FALSE,
+        title_prefix = 'Model run mean',
+        legend_title = MOBS_GROUPING_VAR_LABEL
+      )
+    }
+  ) %>%
+  purrr::set_names(
+    scatter_group_keys
+  )
+
+plot_order = get_var_order_index(
+  unname(
+    mobs_var_params[
+      names(scatter_plots)
+    ]
+  ),
+  WRF_VAR_PARAMS_LIST
+)
+
+scatter_plots = scatter_plots[
+  order(
+    is.na(plot_order),
+    plot_order,
+    names(scatter_plots)
+  )
+]
+
+logger::log_info(
+  'MOBS modelled-period mean scatter plots created'
+)
+
+if (length(scatter_plots) %% 2 != 0) {
+  scatter_plots2 = c(
+    scatter_plots,
+    list(create_blank_plot())
+  )
+} else {
+  scatter_plots2 = scatter_plots
+}
+
+export = gridExtra::marrangeGrob(
+  grobs = scatter_plots2,
+  nrow = 2,
+  ncol = 1,
+  top = mobs_run_title_info
+)
+
+ggplot2::ggsave(
+  filename = fs::path(
+    plots_pth_out,
+    'MOBS_Mean_Scatter_all_sites.pdf'
+  ),
+  plot = export,
+  paper = 'a4',
+  height = 10,
+  width = 7
+)
+
+```
+
+```{r plot_interactive_scatter_plots, eval = PLOT_MOBS_SCATTER_PLOTS, results = 'asis'}
+scatter_plots_interactive = scatter_grouped %>%
+  dplyr::group_split() %>%
+  purrr::set_names(
+    scatter_group_keys
+  ) %>%
+  purrr::imap(
+    function(df, var_nm) {
+
+      plot_mobs_scatter_interactive(
+        mobs_data = df,
+        var_name = var_nm,
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        var_param_nm = mobs_var_params[[var_nm]],
+        group_col = if (!is.null(MOBS_GROUPING_VAR) &&
+                          MOBS_GROUPING_VAR %in% names(df)) {
+            MOBS_GROUPING_VAR
+          } else {
+            NULL
+          },
+          group_label = if (!is.null(MOBS_GROUPING_VAR) &&
+                             MOBS_GROUPING_VAR %in% names(df)) {
+            MOBS_GROUPING_VAR_LABEL
+          } else {
+            NULL
+          },
+          colours = if (!is.null(MOBS_GROUPING_VAR) &&
+                         MOBS_GROUPING_VAR %in% names(df)) {
+            MOBS_GROUPING_VAR_COLOURS
+          } else {
+            NULL
+          },
+        point_colour = MOBS_SCATTER_POINT_COLOUR,
+        title_prefix = NULL,
+        height = 360
+      )
+    }
+  ) %>%
+  {
+    plot_order = get_var_order_index(
+      unname(mobs_var_params[names(.)]),
+      WRF_VAR_PARAMS_LIST
+    )
+
+    .[
+      order(
+        is.na(plot_order),
+        plot_order,
+        names(.)
+      )
+    ]
+  }
+```
+
+```{r mobs_scatter_user_text, eval = PLOT_MOBS_SCATTER_PLOTS, results='asis'}
+cat('## Modelled-period site comparison plots\n\n')
+
+cat(
+  '<p>',
+  'The plots below provide a visual summary of the modelled-period mean ',
+  'spatial evaluation. Each point represents one monitoring site for a ',
+  'given variable.',
+  '</p>\n\n',
+  sep = ''
+)
+
+if (REPORT_STYLE == 'interactive') {
+
+  # The {.tabset} attribute is required for the variable tabs
+  # in the interactive report.
+  cat(
+    '### ',
+    test_label,
+    ' only {.tabset}\n\n',
+    sep = ''
+  )
+
+} else {
+
+  cat(
+    '### ',
+    test_label,
+    ' only\n\n',
+    sep = ''
+  )
+}
+
+scatter_text = paste0(
+  'For the ',
+  test_label,
+  ' run, the observed modelled-period mean is shown on the x-axis and ',
+  'the corresponding modelled value on the y-axis. For regular ',
+  'observations, only site-variable pairs with data capture &ge; ',
+  MOBS_THRESHOLD,
+  '% are included.'
+)
+
+if ('subprecip' %in% MOBS_EVAL_VARS) {
+
+  scatter_text = paste0(
+    scatter_text,
+    ' For precipitation, accumulated totals over the modelled period ',
+    'are used instead of mean values.'
+  )
+}
+
+if (!is.null(MOBS_GROUPING_VAR)) {
+  scatter_text = paste0(
+    scatter_text,
+    ' Points are coloured by ',
+    MOBS_GROUPING_VAR_LABEL,
+    '.'
+  )
+}
+
+cat(
+  '<p>',
+  scatter_text,
+  '</p>\n\n',
+  sep = ''
+)
+
+cat(
+  '<p>',
+  'The solid line represents the 1:1 relationship. Points above this line ',
+  'indicate overestimation by the model, while points below the line indicate ',
+  'underestimation. The dashed lines represent a factor-of-two difference ',
+  'from the observations.',
+  '</p>\n\n',
+  sep = ''
+)
+```
+
+```{r plot_interactive_scatter_render, eval = PLOT_MOBS_SCATTER_PLOTS, results = 'asis'}
+
+purrr::iwalk(
+  scatter_plots_interactive,
+  function(p, var_nm) {
+    
+    var_heading = format_var_label(
+      mobs_var_params[[var_nm]],
+      var_params_list = WRF_VAR_PARAMS_LIST,
+      context = 'mobs',
+      output = 'html',
+      include_units = FALSE
+    )
+    
+    plot_block = htmltools::tags$div(
+      class = 'mobs-scatter-block',
+      style = paste(
+        'position: relative;',
+        'padding-bottom: 2.2em;'
+      ),
+      
+      p %>%
+        plotly::layout(
+          hovermode = FALSE
+        ),
+      
+      htmltools::tags$button(
+        type = 'button',
+        class = 'btn btn-sm btn-outline-secondary',
+        style = paste(
+          'position: absolute;',
+          'right: 0;',
+          'bottom: 0;',
+          'padding: 2px 8px;',
+          'font-size: 0.85em;'
+        ),
+        'Hover: off',
+        onclick = '
+          const block = this.closest(".mobs-scatter-block");
+          const plot = block.querySelector(".js-plotly-plot");
+          
+          if (!plot) {
+            return;
+          }
+          
+          const hoverOff = plot.layout.hovermode === false;
+          
+          Plotly.relayout(
+            plot,
+            {
+              hovermode: hoverOff
+                ? "closest"
+                : false
+            }
+          );
+          
+          this.textContent = hoverOff
+            ? "Hover: on"
+            : "Hover: off";
+        '
+      )
+    )
+    
+    child_text = c(
+      paste0('#### ', var_heading),
+      '',
+      '```{r, echo=FALSE}',
+      'plot_block',
+      '```',
+      ''
+    )
+    
+    child_env = new.env(
+      parent = parent.frame()
+    )
+    
+    child_env$plot_block = plot_block
+    
+    cat(
+      knitr::knit_child(
+        text = child_text,
+        envir = child_env,
+        quiet = TRUE
+      ),
+      sep = '\n'
+    )
+  }
+)
+```
+
+```{r mobs_testref_scatter, eval=PLOT_MOBS_SCATTER_PLOTS && !is.null(REF_MOBS_DIR) && testref_period_overlap}
+
+# Join the Test and Reference modelled-period site means.
+testref_scatter_base = testref_test_site_means %>%
+  dplyr::rename(
+    test_mod = mod,
+    obs_test = obs
+  ) %>%
+  dplyr::inner_join(
+    testref_ref_site_means %>%
+      dplyr::rename(
+        ref_mod = mod,
+        obs_ref = obs
+      ),
+    by = c(
+      'code',
+      'var'
+    )
+  )
+
+# The Test and Reference calculations should be based on exactly the
+# same observations.
+obs_mismatch = testref_scatter_base %>%
+  dplyr::filter(
+    !dplyr::near(
+      obs_test,
+      obs_ref
+    )
+  )
+
+if (nrow(obs_mismatch) > 0) {
+  stop(
+    paste0(
+      'Observed modelled-period means differ between the Test and ',
+      'Reference MOBS datasets for one or more site-variable pairs.'
+    ),
+    call. = FALSE
+  )
+}
+
+testref_scatter_base = testref_scatter_base %>%
+  dplyr::transmute(
+    code,
+    var,
+    obs = obs_test,
+    ref_mod,
+    test_mod
+  ) %>%
+  dplyr::left_join(
+    site_meta_for_stats,
+    by = 'code'
+  )
+
+# Split by variable in the user-defined observation-variable order.
+testref_scatter_grouped = testref_scatter_base %>%
+  dplyr::group_by(var)
+
+testref_scatter_group_keys = testref_scatter_grouped %>%
+  dplyr::group_keys() %>%
+  dplyr::pull(var)
+
+testref_scatter_plots_interactive = testref_scatter_grouped %>%
+  dplyr::group_split() %>%
+  purrr::set_names(testref_scatter_group_keys) %>%
+  {
+    plot_order = get_var_order_index(
+      unname(mobs_var_params[names(.)]),
+      WRF_VAR_PARAMS_LIST
+    )
+
+    .[
+      order(
+        is.na(plot_order),
+        plot_order,
+        names(.)
+      )
+    ]
+  }
+
+testref_scatter_plots_interactive =
+  testref_scatter_plots_interactive %>%
+  purrr::imap(function(df, var_nm) {
+
+    plot_mobs_testref_scatter_interactive(
+      mobs_data = df,
+      var_name = var_nm,
+      var_params_list = WRF_VAR_PARAMS_LIST,
+      var_param_nm = mobs_var_params[[var_nm]],
+      point_colour = MOBS_SCATTER_POINT_COLOUR,
+      group_col = MOBS_GROUPING_VAR,
+      group_label = if (!is.null(MOBS_GROUPING_VAR)) {
+        MOBS_GROUPING_VAR_LABEL
+      } else {
+        NULL
+      },
+      colours = if (!is.null(MOBS_GROUPING_VAR)) {
+        MOBS_GROUPING_VAR_COLOURS
+      } else {
+        NULL
+      },
+      test_label = test_label,
+      ref_label = ref_label,
+      height = 360
+    )
+  }) %>%
+  purrr::compact()
+
+```
+
+```{r testref_scatter_plots_user_text, results='asis', eval=PLOT_MOBS_SCATTER_PLOTS && !is.null(REF_MOBS_DIR) && testref_period_overlap}
+# The {.tabset} attribute is required for the variable tabs
+# in the interactive report.
+if (REPORT_STYLE == 'interactive') {
+
+  cat(
+    '### ',
+    test_label,
+    '/',
+    ref_label,
+    ' comparison {.tabset}\n\n',
+    sep = ''
+  )
+
+} else {
+
+  cat(
+    '### ',
+    test_label,
+    '/',
+    ref_label,
+    ' comparison\n\n',
+    sep = ''
+  )
+}
+
+cat(
+  '<p>',
+  'The ',
+  test_label,
+  '/',
+  ref_label,
+  ' comparison plots show the modelled-period mean value from the ',
+  ref_label,
+  ' run on the x-axis and the corresponding mean from the ',
+  test_label,
+  ' run on the y-axis for each monitoring site. Only site-variable pairs ',
+  'with observations available for both runs over their common evaluation ',
+  'period are included. The solid line represents the 1:1 relationship; ',
+  'points above the line indicate higher values in the ',
+  test_label,
+  ' run, while points below the line indicate higher values in the ',
+  ref_label,
+  ' run.',
+  '</p>\n\n',
+  sep = ''
+)
+
+if ('subprecip' %in% MOBS_EVAL_VARS) {
+
+  cat(
+    '<p>',
+    'For precipitation, accumulated totals over the common evaluation ',
+    'period are shown instead of modelled-period mean values.',
+    '</p>\n\n',
+    sep = ''
+  )
+}
+```
+
+```{r mobs_testref_scatter_render, results='asis', eval=PLOT_MOBS_SCATTER_PLOTS && !is.null(REF_MOBS_DIR) && testref_period_overlap}
+purrr::iwalk(
+  testref_scatter_plots_interactive,
+  function(p, var_nm) {
+
+    var_heading = format_var_label(
+      mobs_var_params[[var_nm]],
+      var_params_list = WRF_VAR_PARAMS_LIST,
+      context = 'mobs',
+      output = 'html',
+      include_units = FALSE
+    )
+
+    plot_block = htmltools::tags$div(
+      class = 'mobs-scatter-block',
+      style = paste(
+        'position: relative;',
+        'padding-bottom: 2.2em;'
+      ),
+
+      p %>%
+        plotly::layout(
+          hovermode = FALSE
+        ),
+
+      htmltools::tags$button(
+        type = 'button',
+        class = 'btn btn-sm btn-outline-secondary',
+        style = paste(
+          'position: absolute;',
+          'right: 0;',
+          'bottom: 0;',
+          'padding: 2px 8px;',
+          'font-size: 0.85em;'
+        ),
+        'Hover: off',
+        onclick = '
+          const block = this.closest(".mobs-scatter-block");
+          const plot = block.querySelector(".js-plotly-plot");
+
+          if (!plot) {
+            return;
+          }
+
+          const hoverOff = plot.layout.hovermode === false;
+
+          Plotly.relayout(
+            plot,
+            {
+              hovermode: hoverOff
+                ? "closest"
+                : false
+            }
+          );
+
+          this.textContent = hoverOff
+            ? "Hover: on"
+            : "Hover: off";
+        '
+      )
+    )
+
+    pollutant_heading = if (REPORT_STYLE == 'interactive') {
+      paste0(
+        '#### ',
+        var_heading,
+        ' {.unlisted}'
+      )
+    } else {
+      paste0(
+        '#### ',
+        var_heading
+      )
+    }
+
+    child_text = c(
+      pollutant_heading,
+      '',
+      '```{r, echo=FALSE}',
+      'plot_block',
+      '```',
+      ''
+    )
+
+    child_env = new.env(
+      parent = parent.frame()
+    )
+
+    child_env$plot_block = plot_block
+
+    cat(
+      knitr::knit_child(
+        text = child_text,
+        envir = child_env,
+        quiet = TRUE
+      ),
+      sep = '\n'
+    )
+  }
+)
+
+rm(
+  list = intersect(
+    c(
+      'testref_scatter_base',
+      'testref_scatter_grouped',
+      'testref_scatter_group_keys',
+      'testref_scatter_plots_interactive'
+    ),
+    ls()
+  )
+)
+```
+
+```{r prepare-mobs-stats-map-data, eval = PLOT_MOBS_MODSTAT_MAPS && isTRUE(mobs_temporal_modstats_available), include = FALSE}
+
+sites_meta = if (inherits(sites_geo, 'sf')) {
+  sf::st_drop_geometry(sites_geo)
+} else {
+  sites_geo
+}
+
+test_mobs_site_stats2 = test_mobs_regular_site_stats %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(
+    sites_meta %>%
+      dplyr::select(
+        dplyr::any_of(
+          c(
+            'code',
+            'station',
+            'site',
+            'name',
+            'elev(m)',
+            'latitude',
+            'longitude',
+            'call'
+          )
+        )
+      ) %>%
+      dplyr::distinct(),
+    by = 'code'
+  )
+
+mobs_map_stats = intersect(
+  MOBS_MAP_STATS,
+  names(test_mobs_site_stats2)
+)
+
+mobs_map_vars = test_mobs_site_stats2 %>%
+  dplyr::filter(
+    var %in% MOBS_EVAL_VARS
+  ) %>%
+  dplyr::distinct(
+    var
+  ) %>%
+  dplyr::pull(var)
+
+mobs_map_combinations = tidyr::expand_grid(
+  var = mobs_map_vars,
+  stat = mobs_map_stats
+) %>%
+  dplyr::filter(
+    purrr::map2_lgl(
+      var,
+      stat,
+      ~ mobs_map_stat_is_enabled(
+        var_nm = .x,
+        stat = .y,
+        include_by_var = MOBS_MAP_STATS_INCLUDE_BY_VAR,
+        exclude_by_var = MOBS_MAP_STATS_EXCLUDE_BY_VAR
+      )
+    )
+  ) %>%
+  dplyr::filter(
+    purrr::map2_lgl(
+      var,
+      stat,
+      function(var_nm, stat_nm) {
+        
+        x = test_mobs_site_stats2 %>%
+          dplyr::filter(
+            var == var_nm
+          ) %>%
+          dplyr::pull(
+            dplyr::all_of(stat_nm)
+          )
+        
+        any(
+          is.finite(x)
+        )
+      }
+    )
+  )
+
+vars_avail = mobs_map_combinations %>%
+  dplyr::distinct(
+    var
+  ) %>%
+  dplyr::pull(var)
+
+stats_avail = mobs_map_combinations %>%
+  dplyr::distinct(
+    stat
+  ) %>%
+  dplyr::pull(stat)
+
+mobs_map_var_labs = vars_avail %>%
+  purrr::map_chr(
+    function(var_nm) {
+
+      format_var_label(
+        mobs_var_params[[var_nm]],
+        var_params_list = WRF_VAR_PARAMS_LIST,
+        context = 'mobs',
+        output = 'html',
+        include_units = FALSE
+      )
+    }
+  )
+
+mobs_map_stat_labs = c(
+  MB = 'MB',
+  NMB = 'NMB',
+  RMSE = 'RMSE',
+  r_pearson = 'r',
+  r_spearman = 'r'
+)
+
+mobs_map_stat_palettes = list(
+  MB = MOBS_MAP_MB_PALETTE,
+  NMB = MOBS_MAP_NMB_PALETTE,
+  RMSE = MOBS_MAP_RMSE_PALETTE,
+  r_pearson = MOBS_MAP_R_PALETTE,
+  r_spearman = MOBS_MAP_R_PALETTE
+)
+
+mobs_stat_maps = stats_avail %>%
+  purrr::set_names() %>%
+  purrr::map(
+    function(stat_nm) {
+
+      vars_for_stat = mobs_map_combinations %>%
+        dplyr::filter(
+          stat == stat_nm
+        ) %>%
+        dplyr::pull(var)
+
+      vars_for_stat %>%
+        purrr::set_names() %>%
+        purrr::map(
+          function(var_nm) {
+
+            plot_mobs_stat_map(
+              sites_df = test_mobs_site_stats2,
+              stat = stat_nm,
+              var_nm = var_nm,
+              var_param_nm = mobs_var_params[[var_nm]],
+              var_params_list = WRF_VAR_PARAMS_LIST,
+              stat_lookup = mobs_map_stat_labs,
+              palette = mobs_map_stat_palettes[[stat_nm]]
+            )
+          }
+        )
+    }
+  )
+
+if (REPORT_STYLE == 'interactive') {
+
+  mobs_map_selector = htmltools::tags$select(
+    id = 'mobs-map-var-selector',
+    class = 'form-select',
+    style = 'width: auto; max-width: 300px;',
+    purrr::map2(
+      vars_avail,
+      mobs_map_var_labs,
+      function(var_nm, var_lab) {
+
+        htmltools::tags$option(
+          value = var_nm,
+          htmltools::HTML(var_lab)
+        )
+      }
+    )
+  )
+
+  mobs_map_selector_ui = htmltools::tags$div(
+    class = 'mobs-map-selector',
+    htmltools::tags$label(
+      `for` = 'mobs-map-var-selector',
+      'Variable:'
+    ),
+    mobs_map_selector
+  )
+
+  default_mobs_map_var = vars_avail[1]
+
+  mobs_map_tabs = stats_avail %>%
+    purrr::set_names() %>%
+    purrr::map(
+      function(stat_nm) {
+
+        vars_for_stat = names(
+          mobs_stat_maps[[stat_nm]]
+        )
+
+        purrr::map(
+          vars_for_stat,
+          function(var_nm) {
+
+            make_mobs_map_container(
+              map = mobs_stat_maps[[stat_nm]][[var_nm]],
+              stat = stat_nm,
+              var_nm = var_nm
+            )
+          }
+        )
+      }
+    )
+
+  mobs_map_css = htmltools::tags$style(
+    htmltools::HTML(
+      '
+      .mobs-map-stack {
+        position: relative;
+      }
+
+      .mobs-map-panel {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .mobs-map-panel.mobs-map-active {
+        position: relative;
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+      }
+      '
+    )
+  )
+
+  mobs_map_selector_js = htmltools::tags$script(
+    htmltools::HTML(
+      '
+      document.addEventListener("DOMContentLoaded", function() {
+
+        const selector = document.getElementById("mobs-map-var-selector");
+
+        if (!selector) return;
+
+        function updateMobsMaps() {
+
+          const selectedVar = selector.value;
+
+          document.querySelectorAll(".mobs-map-panel").forEach(function(panel) {
+            panel.classList.remove("mobs-map-active");
+          });
+
+          const varClass = "mobs-map-var-" +
+            selectedVar.replace(/[^A-Za-z0-9_-]/g, "-");
+
+          document.querySelectorAll("." + varClass).forEach(function(panel) {
+            panel.classList.add("mobs-map-active");
+          });
+        }
+
+        selector.addEventListener(
+          "change",
+          updateMobsMaps
+        );
+
+        setTimeout(
+          updateMobsMaps,
+          500
+        );
+      });
+      '
+    )
+  )
+}
+```
+
+```{r mobs_stats_map_user_text, eval = PLOT_MOBS_MODSTAT_MAPS, results = 'asis'}
+if (length(vars_avail) > 0 && length(stats_avail) > 0) {
+
+  cat('\n## Model evaluation statistic maps\n\n')
+
+  mobs_map_intro = c(
+    paste(
+      'The maps below show site-level model evaluation statistics for',
+      format_elements_to_print(mobs_map_var_labs),
+      '.'
+    )
+  )
+
+  if (REPORT_STYLE == 'interactive') {
+
+    mobs_map_intro = c(
+      mobs_map_intro,
+      paste(
+        'Use the pollutant selector to choose the pollutant displayed on the maps,',
+        'and the tabs to switch between',
+        format_elements_to_print(mobs_map_stat_labs[stats_avail]),
+        '.'
+      )
+    )
+
+  } else {
+
+    mobs_map_intro = c(
+      mobs_map_intro,
+      paste(
+        'Maps are shown separately for each pollutant and for',
+        format_elements_to_print(mobs_map_stat_labs[stats_avail]),
+        '.'
+      )
+    )
+  }
+
+  mobs_map_intro = c(
+    mobs_map_intro,
+    'Marker colours indicate the value of the corresponding statistic.',
+    'Clicking on a site opens a popup showing the calculated model evaluation statistic for that site and pollutant.'
+  )
+
+  cat(
+    '<p>',
+    stringr::str_c(
+      mobs_map_intro,
+      collapse = ' '
+    ),
+    '</p>\n\n',
+    sep = ''
+  )
+}
+```
+
+```{r mobs_stats_maps, eval = PLOT_MOBS_MODSTAT_MAPS, fig.width = 8.4, results = 'asis'}
+if (
+  length(vars_avail) > 0 &&
+  length(stats_avail) > 0
+) {
+
+  n_requested_maps = nrow(
+    mobs_map_combinations
+  )
+
+  if (n_requested_maps > 20) {
+    logger::log_warn(
+      glue::glue(
+        'Requested {n_requested_maps} MOBS statistic maps. ',
+        'The HTML report may become large or slow to load.'
+      )
+    )
+  }
+
+  if (REPORT_STYLE == 'interactive') {
+
+    # Shared map styling and pollutant selector.
+
+    cat(
+      as.character(
+        mobs_map_css
+      ),
+      '\n'
+    )
+
+    cat(
+      as.character(
+        mobs_map_selector_ui
+      ),
+      '\n\n'
+    )
+
+    # Statistic maps as tabs. The H5 heading is required by the
+    # R Markdown tabset mechanism but is below the report TOC depth.
+
+    cat('##### Statistics {.tabset}\n\n')
+
+    purrr::walk(
+      stats_avail,
+      function(stat_nm) {
+
+        stat_heading = unname(
+          mobs_map_stat_labs[stat_nm]
+        )
+
+        if (
+          length(stat_heading) == 0 ||
+          is.na(stat_heading)
+        ) {
+          stat_heading = stat_nm
+        }
+
+        maps_this_stat = mobs_map_tabs[[stat_nm]]
+
+        child_env = new.env(
+          parent = environment()
+        )
+
+        child_env$maps_this_stat = maps_this_stat
+        child_env$stat_heading = stat_heading
+
+        child_text = c(
+          '###### `r stat_heading` {.unlisted}',
+          '',
+          '```{r, echo=FALSE}',
+          'htmltools::browsable(',
+          '  htmltools::tags$div(',
+          '    class = "mobs-map-stack",',
+          '    maps_this_stat',
+          '  )',
+          ')',
+          '```',
+          ''
+        )
+
+        cat(
+          knitr::knit_child(
+            text = child_text,
+            envir = child_env,
+            quiet = TRUE
+          ),
+          sep = '\n'
+        )
+      }
+    )
+
+    # Shared pollutant switching behaviour.
+
+    cat(
+      as.character(
+        mobs_map_selector_js
+      ),
+      '\n'
+    )
+
+  } else {
+
+    # Static report: show each pollutant and statistic sequentially.
+
+    purrr::walk(
+      vars_avail,
+      function(var_nm) {
+
+        var_heading = format_var_label(
+          mobs_var_params[[var_nm]],
+          var_params_list = WRF_VAR_PARAMS_LIST,
+          context = 'mobs',
+          output = 'html',
+          include_units = FALSE
+        )
+
+        child_text = c(
+          paste0(
+            '### ',
+            var_heading
+          ),
+          ''
+        )
+
+        purrr::walk(
+          stats_avail,
+          function(stat_nm) {
+
+            if (!var_nm %in% names(mobs_stat_maps[[stat_nm]])) {
+              return(NULL)
+            }
+
+            stat_heading = unname(
+              mobs_map_stat_labs[stat_nm]
+            )
+
+            if (
+              length(stat_heading) == 0 ||
+              is.na(stat_heading)
+            ) {
+              stat_heading = stat_nm
+            }
+
+            map_nm = paste0(
+              'map_',
+              stat_nm
+            )
+
+            child_text <<- c(
+              child_text,
+              paste0(
+                '#### ',
+                stat_heading
+              ),
+              '',
+              '```{r, echo=FALSE}',
+              map_nm,
+              '```',
+              ''
+            )
+          }
+        )
+
+        child_env = new.env(
+          parent = environment()
+        )
+
+        purrr::walk(
+          stats_avail,
+          function(stat_nm) {
+
+            if (var_nm %in% names(mobs_stat_maps[[stat_nm]])) {
+
+              map_nm = paste0(
+                'map_',
+                stat_nm
+              )
+
+              child_env[[map_nm]] =
+                mobs_stat_maps[[stat_nm]][[var_nm]]
+            }
+          }
+        )
+
+        cat(
+          knitr::knit_child(
+            text = child_text,
+            envir = child_env,
+            quiet = TRUE
+          ),
+          sep = '\n'
+        )
+      }
+    )
+  }
+}
+```
+
+```{asis, echo = PRINT_WRF_SETTINGS, eval = PRINT_WRF_SETTINGS}
+# WRF run settings
+
+The table below summarises selected WRF global attributes from the first WRF output file.
+```
+
+```{r wrf-run-settings-table, eval = PRINT_WRF_SETTINGS}
+wrf_run_settings %>%
+  DT::datatable(
+    rownames = FALSE,
+    filter = 'top',
+    options = list(
+      pageLength = 15,
+      scrollX = TRUE,
+      dom = 'tip'
+    ),
+    class = 'compact stripe hover'
+  )
+```
