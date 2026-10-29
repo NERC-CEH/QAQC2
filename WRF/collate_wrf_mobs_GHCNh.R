@@ -106,13 +106,17 @@ logger::log_info('Workers: {collate_workers}')
 
 # INPUT FILES -------------------------------------------------------------
 
+# Use the innermost Test domain for MOBS collation.
+mobs_domain = unname(tail(TEST_DOMAINS, 1))
+
 wrf_files = TEST_DIR %>%
-  fs::dir_ls() %>%
-  stringr::str_subset(stringr::str_c('wrfout_', WRF_DOMAIN)) %>%
+  fs::dir_ls(regexp = stringr::str_c('^wrfout_', mobs_domain, '_')) %>%
   sort()
 
 if (length(wrf_files) == 0) {
-  stop('No WRF files found in WRF_DIR matching wrfout_', WRF_DOMAIN)
+  stop(glue::glue(
+    "No WRF files found in {TEST_DIR} matching wrfout_{mobs_domain}_*"
+  ))
 }
 
 logger::log_info('Found {length(wrf_files)} WRF files')
