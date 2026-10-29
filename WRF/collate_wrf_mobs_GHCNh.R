@@ -545,8 +545,8 @@ readr::write_rds(sites_geo, sites_pth)
 paths = wrf_files
 wrf_var_names = WRF_EXTRACT_VARS
 codes = sites_geo$code
-i_idx = idx_tibble$i_py
-j_idx = idx_tibble$j_py
+i_idx = sites_geo$i_py
+j_idx = sites_geo$j_py
 
 
 # EXTRACT WRF DATA --------------------------------------------------------
