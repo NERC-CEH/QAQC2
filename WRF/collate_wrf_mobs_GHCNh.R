@@ -127,18 +127,21 @@ logger::log_info('Found {length(wrf_files)} WRF files')
 logger::log_info('First WRF file: {wrf_files[[1]]}')
 logger::log_info('Last WRF file: {wrf_files[[length(wrf_files)]]}')
 
+runyear = wrf_files[[1]] %>%
+  fs::path_file() %>%
+  stringr::str_extract('(?<=wrfout_d[0-9]{2}_)\\d{4}') %>%
+  as.integer()
+
+if (is.na(runyear)) {
+  stop('Could not determine the simulation year from the WRF filenames.')
+}
+
 obs_dir = fs::path(OBS_REPO)
-
-
 checkmate::assert_directory_exists(obs_dir)
 
 sites_available_pth = fs::path(
   obs_dir,
-  paste0(
-    'Sites_available_',
-    RUNYEAR,
-    '.rds'
-  )
+  glue::glue('Sites_available_{runyear}.rds')
 )
 
 checkmate::assert_file_exists(sites_available_pth)
