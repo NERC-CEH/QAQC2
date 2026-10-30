@@ -133,6 +133,7 @@ if (!exists('WRF_VAR_PARAMS_LIST')) {
 source(fs::path('../utils/myquicktext.R'))
 source(fs::path('../utils/utils.R'))
 source(fs::path('../utils/emep_qaqc_funcs.R'))
+source(fs::path('../utils/wrf_setting_lookup.R'))
 
 platform = runtime_platform() # in utils.R
 
@@ -243,7 +244,8 @@ if (isTRUE(PRINT_WRF_SETTINGS)) {
 
       wrf_run_settings = summarise_wrf_run_settings(
         first_file = first_file,
-        last_file = last_file
+        last_file = last_file,
+        physics_lookup = WRF_PHYSICS_LOOKUP
       )
     }
   }

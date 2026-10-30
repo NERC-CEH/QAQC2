@@ -25847,7 +25847,7 @@ summarise_temporal_emep = function(
 }
 summarise_wrf_run_settings = function(first_file,
                                       last_file = NULL,
-                                      physics_lookup = WRF_PHYSICS_LOOKUP) {
+                                      physics_lookup = NULL) {
   
   attrs = get_wrf_global_attrs(first_file)
   
