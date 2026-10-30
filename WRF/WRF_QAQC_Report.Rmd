@@ -130,15 +130,9 @@ if (!exists('WRF_VAR_PARAMS_LIST')) {
   )
 }
 
-# mac paths
-source(fs::path('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/utils.R'))
-source('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/myquicktext.R')
-source('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/wrf_setting_lookup.R')
-source('/Users/tomasliska/Desktop/Work/EMEP_QAQC/QAQC2/utils/emep_qaqc_funcs.R')
-
-# source(fs::path('../utils/myquicktext.R'))
-# source(fs::path('../utils/utils.R'))
-# source(fs::path('../utils/emep_qaqc_funcs.R'))
+source(fs::path('../utils/myquicktext.R'))
+source(fs::path('../utils/utils.R'))
+source(fs::path('../utils/emep_qaqc_funcs.R'))
 
 platform = runtime_platform() # in utils.R
 
