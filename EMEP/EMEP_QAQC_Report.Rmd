@@ -11661,10 +11661,16 @@ if (REPORT_STYLE == 'interactive') {
 
   # IMPORTANT: The {.tabset} attribute is required for the
   # temporal/spatial tabs in the interactive report.
+  test_run_label = if (stringr::str_detect(test_label, stringr::regex('\\brun$', ignore_case = TRUE))) {
+    test_label
+  } else {
+    paste(test_label, 'run')
+  }
+  
   cat(
     '### ',
-    test_label,
-    ' only {.tabset}\n\n',
+    test_run_label,
+    ' {.tabset}\n\n',
     sep = ''
   )
 
@@ -12132,14 +12138,20 @@ cat(
   sep = ''
 )
 
+test_run_label = if (stringr::str_detect(test_label, stringr::regex('\\brun$', ignore_case = TRUE))) {
+  test_label
+} else {
+  paste(test_label, 'run')
+}
+
 if (REPORT_STYLE == 'interactive') {
 
   # The {.tabset} attribute is required for the pollutant tabs
   # in the interactive report.
   cat(
     '### ',
-    test_label,
-    ' only {.tabset}\n\n',
+    test_run_label,
+    ' {.tabset}\n\n',
     sep = ''
   )
 
@@ -12147,8 +12159,8 @@ if (REPORT_STYLE == 'interactive') {
 
   cat(
     '### ',
-    test_label,
-    ' only\n\n',
+    test_run_label,
+    '\n\n',
     sep = ''
   )
 }
