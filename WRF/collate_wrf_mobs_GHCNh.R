@@ -695,11 +695,24 @@ obs_vars = c(
   'precip'
 )
 
-obs_data = obs_data_pths %>%
-  purrr::map(readr::read_rds) %>%
+obs_files = obs_data_pths %>%
+  purrr::map(readr::read_rds)
+
+obs_data = obs_files %>%
   purrr::map('processed_data') %>%
   purrr::compact() %>%
   dplyr::bind_rows()
+
+precip_metadata = obs_files %>%
+  purrr::map(function(x) {
+    list(
+      precip_method = x$precip_summary$precip_method[[1]],
+      precip_accum_clean = x$precip_accum_clean
+    )
+  })
+
+names(precip_metadata) = obs_files %>%
+  purrr::map_chr(~ .x$precip_summary$code[[1]])
 
 if (!'scenario' %in% names(obs_data)) {
   obs_data = obs_data %>%
@@ -745,17 +758,20 @@ mobs_opts = furrr::furrr_options(
 )
 
 mobs_list = mobs_list %>%
-  furrr::future_map(
-    function(df_code) {
+  furrr::future_imap(
+    function(df_code, code) {
       df_code %>%
-        add_subprecip_long() %>% 
-        dplyr::filter(.data$var != 'precip_code') %>% 
+        add_subprecip_long(
+          precip_method = precip_metadata[[code]]$precip_method,
+          precip_accum_clean = precip_metadata[[code]]$precip_accum_clean
+        ) %>%
+        dplyr::filter(var != 'precip_code') %>%
         tidyr::pivot_wider(
           id_cols = c('date', 'code', 'var'),
           names_from = 'scenario',
           values_from = 'value'
-        ) %>% 
-        dplyr::arrange(.data$date)
+        ) %>%
+        dplyr::arrange(date)
     },
     .options = mobs_opts
   )

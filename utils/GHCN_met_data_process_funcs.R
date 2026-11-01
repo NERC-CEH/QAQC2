@@ -171,7 +171,9 @@ assess_precip_same_len_messiness_by_period = function(precip_oldstyle) {
   )
 }
 
-clean_precip_accum_windows = function(precip_consolidated) {
+
+clean_precip_accum_windows = function(precip_consolidated,
+                                      year = NULL) {
   
   df = precip_consolidated %>%
     dplyr::filter(
@@ -184,7 +186,29 @@ clean_precip_accum_windows = function(precip_consolidated) {
       precip_raw = as.numeric(precip_raw),
       window_start = date - lubridate::hours(precip_code) + lubridate::hours(1),
       window_end = date
-    ) %>%
+    )
+  
+  # Exclude accumulation windows extending outside the requested year.
+  if (!is.null(year)) {
+    
+    year_start = lubridate::make_datetime(
+      year, 1, 1, 0, 0, 0,
+      tz = 'UTC'
+    )
+    
+    next_year_start = lubridate::make_datetime(
+      year + 1, 1, 1, 0, 0, 0,
+      tz = 'UTC'
+    )
+    
+    df = df %>%
+      dplyr::filter(
+        window_start >= year_start,
+        window_end < next_year_start
+      )
+  }
+  
+  df = df %>%
     dplyr::arrange(
       dplyr::desc(precip_code),
       dplyr::desc(date)
@@ -232,6 +256,7 @@ clean_precip_accum_windows = function(precip_consolidated) {
       window_end
     )
 }
+
 
 consolidate_ghcnh_precip_accum = function(
     precip_qc,
@@ -1489,7 +1514,8 @@ regularise_ghcnh_hourly_precip = function(
   
   data_checked = data %>%
     dplyr::filter(
-      !is.na(amount)
+      !is.na(amount),
+      !is.na(date)
     ) %>%
     dplyr::mutate(
       original_date = date,
@@ -1509,6 +1535,27 @@ regularise_ghcnh_hourly_precip = function(
       ),
       exact_hour = time_offset_seconds == 0
     )
+  
+  if (nrow(data_checked) == 0) {
+    
+    return(
+      list(
+        data = data_checked %>%
+          dplyr::mutate(
+            hourly_selection_method = character()
+          ),
+        diagnostics = tibble::tibble(
+          n_input_values = 0L,
+          n_output_values = 0L,
+          n_exact_hour = 0L,
+          n_nearest = 0L,
+          n_tie_before = 0L,
+          n_tie_after = 0L,
+          n_tie_mean = 0L
+        )
+      )
+    )
+  }
   
   selected = data_checked %>%
     dplyr::group_by(
@@ -1687,7 +1734,8 @@ regularise_ghcnh_hourly_records = function(
   
   data_checked = data %>%
     dplyr::filter(
-      !is.na(value)
+      !is.na(value),
+      !is.na(date)
     ) %>%
     dplyr::mutate(
       original_date = date,
@@ -2533,7 +2581,9 @@ process_ghcnh_precip_one_station = function(
       
       precip_accum_clean_one_report_type =
         precip_consolidated_for_cleaning_one_report_type %>%
-        clean_precip_accum_windows() %>%
+        clean_precip_accum_windows(
+          year = lubridate::year(min(data$date, na.rm = TRUE))
+        ) %>%
         dplyr::mutate(
           report_type = report_type,
           .before = 1

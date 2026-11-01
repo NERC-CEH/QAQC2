@@ -309,7 +309,9 @@ add_plotly_interactive_controls = function(
     )
 }
 
-add_subprecip_long = function(mobs_df) {
+add_subprecip_long = function(mobs_df,
+                              precip_method = 'observed_hourly',
+                              precip_accum_clean = NULL) {
   
   obs_prec = mobs_df %>%
     dplyr::filter(
@@ -331,26 +333,102 @@ add_subprecip_long = function(mobs_df) {
       value = obs_val
     )
   
-  sub_mod = mobs_df %>%
+  mod_prec = mobs_df %>%
     dplyr::filter(
       var == 'precip',
       scenario == 'mod'
-    ) %>%
-    dplyr::left_join(
-      obs_prec,
-      by = c('code', 'date')
-    ) %>%
-    dplyr::transmute(
-      code,
-      date,
-      var = 'subprecip',
-      scenario = 'mod',
-      value = dplyr::if_else(
-        !is.na(obs_val),
-        value,
-        NA_real_
-      )
     )
+  
+  if (precip_method == 'aggregated') {
+    
+    if (is.null(precip_accum_clean)) {
+      stop('precip_accum_clean dataframe is required for aggregated precipitation.')
+    }
+    
+    # Retain valid accumulation windows with available observations.
+    accum_windows = precip_accum_clean %>%
+      dplyr::filter(
+        !is.na(precip_raw),
+        !is.na(window_start),
+        !is.na(window_end)
+      ) %>%
+      dplyr::select(
+        date,
+        window_start,
+        window_end,
+        precip_code
+      )
+    
+    # Match hourly modelled precipitation to each observation window.
+    mod_accum = accum_windows %>%
+      dplyr::mutate(
+        mod_value = purrr::map2_dbl(
+          window_start,
+          window_end,
+          function(start, end) {
+            
+            values = mod_prec %>%
+              dplyr::filter(
+                date >= start,
+                date <= end
+              ) %>%
+              dplyr::pull(value)
+            
+            if (
+              length(values) != as.integer(
+                difftime(end, start, units = 'hours')
+              ) + 1L ||
+              anyNA(values)
+            ) {
+              return(NA_real_)
+            }
+            
+            sum(values)
+          }
+        )
+      ) %>%
+      dplyr::select(date, mod_value)
+    
+    sub_mod = mod_prec %>%
+      dplyr::left_join(
+        mod_accum,
+        by = 'date'
+      ) %>%
+      dplyr::transmute(
+        code,
+        date,
+        var = 'subprecip',
+        scenario = 'mod',
+        value = mod_value
+      )
+    
+  } else if (precip_method %in% c(
+    'observed_hourly',
+    'disaggregated_hourly'
+  )) {
+    
+    sub_mod = mod_prec %>%
+      dplyr::left_join(
+        obs_prec,
+        by = c('code', 'date')
+      ) %>%
+      dplyr::transmute(
+        code,
+        date,
+        var = 'subprecip',
+        scenario = 'mod',
+        value = dplyr::if_else(
+          !is.na(obs_val),
+          value,
+          NA_real_
+        )
+      )
+    
+  } else {
+    stop(glue::glue(
+      "Unsupported precipitation method: {precip_method}"
+    ))
+  }
   
   dplyr::bind_rows(
     mobs_df,
