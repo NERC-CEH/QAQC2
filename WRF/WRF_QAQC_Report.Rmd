@@ -4632,6 +4632,131 @@ cat(
 )
 ```
 
+```{r mobs_temporal_modstats_user_text, eval=mobs_temporal_modstats_available && PRINT_MODSTATS_TABLES, results='asis'}
+
+if (REPORT_STYLE == 'interactive') {
+
+  cat(
+    '### ',
+    test_label,
+    ' only {.tabset}\n\n',
+    sep = ''
+  )
+
+  cat('#### Temporal statistics {.unlisted}\n\n')
+
+  temporal_modstats_sentences = c(
+    'The table below shows temporal model evaluation statistics by monitoring site and variable.',
+    'These statistics are calculated from the paired modelled and observed regular time series at each site.',
+    if (!is.null(MOBS_GROUPING_VAR)) {
+      'Use the column filters to subset by site, variable or site grouping.'
+    } else {
+      'Use the column filters to subset by site or variable.'
+    }
+  )
+
+  cat(
+    '<p>',
+    stringr::str_c(
+      temporal_modstats_sentences,
+      collapse = ' '
+    ),
+    '</p>\n\n',
+    sep = ''
+  )
+}
+```
+
+```{r print_mobs_temporal_modstats, eval=mobs_temporal_modstats_available && REPORT_STYLE == 'interactive' && PRINT_MODSTATS_TABLES, results='asis'}
+
+make_modstats_dt(
+  test_mobs_regular_site_stats,
+  var_params_list = WRF_VAR_PARAMS_LIST,
+  var_param_names = mobs_var_params,
+  var_fill = MOBS_MODSTATS_VAR_FILL,
+  caption = 'Site-level temporal model evaluation statistics.',
+  include_run = FALSE,
+  grouping_var = MOBS_GROUPING_VAR,
+  grouping_var_label = MOBS_GROUPING_VAR_LABEL
+)
+```
+
+```{r mobs_spatial_modstats_user_text, eval=mobs_spatial_modstats_available && PRINT_MODSTATS_TABLES, results='asis'}
+
+if (REPORT_STYLE == 'interactive') {
+
+  cat('#### Spatial statistics {.unlisted}\n\n')
+
+} else {
+
+  cat('### Spatial statistics\n\n')
+}
+
+spatial_modstats_sentences = c(
+  'The table below summarises model evaluation statistics calculated from modelled-period mean values across monitoring sites.',
+  'Each site first contributes one modelled-period mean observed value and one modelled-period mean modelled value for each variable.',
+  glue::glue(
+    'For regular observations, only site-variable pairs with data capture >= {MOBS_THRESHOLD}% are included.'
+  )
+)
+
+if ('subprecip' %in% MOBS_EVAL_VARS) {
+
+  spatial_modstats_sentences = c(
+    spatial_modstats_sentences,
+    'Precipitation statistics are calculated using accumulated precipitation over the modelled period.'
+  )
+}
+
+if (!is.null(MOBS_GROUPING_VAR)) {
+
+  spatial_modstats_sentences = c(
+    spatial_modstats_sentences,
+    'The table includes statistics for all sites together and, where possible, by site group.'
+  )
+}
+
+cat(
+  '<p>',
+  stringr::str_c(
+    spatial_modstats_sentences,
+    collapse = ' '
+  ),
+  '</p>\n\n',
+  sep = ''
+)
+```
+
+```{r print_mobs_spatial_modstats, eval=mobs_spatial_modstats_available && PRINT_MODSTATS_TABLES, results='asis'}
+
+if (REPORT_STYLE == 'interactive') {
+
+  make_modstats_dt(
+    test_mobs_stats_table,
+    var_params_list = WRF_VAR_PARAMS_LIST,
+    var_param_names = mobs_var_params,
+    var_fill = MOBS_MODSTATS_VAR_FILL,
+    caption = 'Spatial model evaluation statistics based on modelled-period mean values.',
+    include_run = FALSE,
+    grouping_var = MOBS_GROUPING_VAR,
+    grouping_var_label = MOBS_GROUPING_VAR_LABEL
+  )
+
+} else {
+
+  make_modstats_gt(
+    test_mobs_stats_table,
+    var_params_list = WRF_VAR_PARAMS_LIST,
+    var_param_names = mobs_var_params,
+    var_fill = MOBS_MODSTATS_VAR_FILL,
+    caption = 'Spatial model evaluation statistics based on modelled-period mean values.',
+    include_run = FALSE,
+    grouping_var = MOBS_GROUPING_VAR,
+    grouping_var_label = MOBS_GROUPING_VAR_LABEL
+  )
+}
+```
+
 ```{r mobs_testref_temporal_modstats_user_text, eval=testref_mobs_temporal_modstats_available && PRINT_MODSTATS_TABLES, results = 'asis'}
 if (REPORT_STYLE == 'interactive') {
 
