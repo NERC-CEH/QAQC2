@@ -754,7 +754,7 @@ mobs_opts = furrr::furrr_options(
     'tidyr',
     'tibble'
   ),
-  globals = c('add_subprecip_long')
+  globals = c('add_subprecip_long', 'precip_metadata')
 )
 
 mobs_list = mobs_list %>%
