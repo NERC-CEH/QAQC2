@@ -2560,7 +2560,21 @@ run_info_table = tibble::tibble(
 # Run Info
 ```{r run_info_table_print}
 run_info_table %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(test, ref),
+      ~ ifelse(
+        Parameter == 'Run directory',
+        stringr::str_replace_all(.x, '/', '/<wbr>'),
+        .x
+      )
+    )
+  ) %>%
   gt::gt() %>%
+  gt::fmt_markdown(
+    columns = c(test, ref),
+    rows = Parameter == 'Run directory'
+  ) %>%
   gt::cols_label(
     test = test_label,
     ref = ref_label
@@ -2573,8 +2587,8 @@ run_info_table %>%
   gt::tab_style(
     style = gt::css(
       `white-space` = 'normal',
-      `overflow-wrap` = 'anywhere',
-      `word-break` = 'break-word'
+      `overflow-wrap` = 'normal',
+      `word-break` = 'normal'
     ),
     locations = gt::cells_body(
       columns = c(test, ref),
