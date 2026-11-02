@@ -509,14 +509,14 @@ met_sites_in = met_sites_in %>%
     station_name_file = sanitise_string(
       name,
       case = 'title',
-      separator = '*'
+      separator = '_'
     ),
     output_pth = fs::path(
       OBS_REPO,
       'Data',
       paste0(
         station_name_file,
-        '*',
+        '_',
         code,
         '_',
         YEAR,
