@@ -7130,7 +7130,11 @@ if (make_static_summary_maps) {
   # Domain order is inherited from summary_map_data, which in turn follows
   # domain_setup (e.g. outer then inner).
   # -----------------------------------------------------------------------
-  map_geo_features = load_map_geo_features(MAPPING_GEO_LIST)
+  map_geo_features = if (is.null(MAPPING_GEO_LIST)) {
+    NULL
+  } else {
+    purrr::map(MAPPING_GEO_LIST, load_map_geo_features)
+  }
   
   summary_map_plots = summary_map_data %>%
     purrr::imap(
@@ -7153,6 +7157,8 @@ if (make_static_summary_maps) {
         this_var_diff %>%
           purrr::imap(
             function(domain_diff, domain) {
+              
+              this_map_geo_features = map_geo_features[[domain]]
   
               has_ref = if (is_ratio) {
                 length(plot_vars) == 2 &&
@@ -7180,7 +7186,7 @@ if (make_static_summary_maps) {
                 ),
                 emep_var = plot_vars,
                 var_params_list = EMEP_VAR_PARAMS_LIST,
-                map_geo_params_list = map_geo_features,
+                map_geo_params_list = this_map_geo_features,
                 testref_pal_pth = TESTREF_PALETTE,
                 absdiff_pal_pth = ABSDIFF_PALETTE,
                 reldiff_pal_pth = RELDIFF_PALETTE,

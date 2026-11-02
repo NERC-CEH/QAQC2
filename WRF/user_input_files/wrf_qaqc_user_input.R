@@ -229,9 +229,20 @@ SUMMARY_MAP_PDF_DPI = 300
 
 SUMMARY_MAP_REPORT_DPI = 150
 
-# Optional additional mapping layers.
-# NULL uses Natural Earth country boundaries.
-
+# Optional additional mapping layers. NULL uses Natural Earth country
+# boundaries at medium resolution for all plotted domains
+# use named lists to plot geodata for a particular domain
+# add ggplot aesthetic parameters to each entry 
+# Example: 
+# MAPPING_GEO_LIST = list(
+#   outer = NULL,
+#   inner = list(
+#     countries = list(data = 'ne_countries', ne_scale = 'medium', 
+#                      color = 'black, fill = NA, linewidth = 0.1, alpha = 1),
+#     roads = list(pth = '/home/tomasliska/QAQC_ANCILLARY_FILES/UK_geo_data/Trunk_roads.gpkg',
+#                  data = NULL, color = 'black', linewidth = 0.1, alpha = 1))
+#   )
+# )
 MAPPING_GEO_LIST = NULL
 
 # Colourbar dimensions.

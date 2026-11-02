@@ -916,7 +916,11 @@ summary_map_ref_stat_title = format_summary_stat(
 
 # Load geographical features.
 
-map_geo_features = load_map_geo_features(MAPPING_GEO_LIST)
+map_geo_features = if (is.null(MAPPING_GEO_LIST)) {
+    NULL
+  } else {
+    purrr::map(MAPPING_GEO_LIST, load_map_geo_features)
+  }
 
 # Create static maps for each variable and domain.
 
@@ -929,6 +933,8 @@ summary_map_plots = summary_map_data %>%
         if (is.null(domain_diff)) {
           return(NULL)
         }
+        
+        this_map_geo_features = map_geo_features[[domain]]
 
         has_ref = RUN_LABELS[[2]] %in% names(domain_diff)
 
@@ -944,7 +950,7 @@ summary_map_plots = summary_map_data %>%
           diff_list = stats::setNames(list(domain_diff), domain),
           emep_var = v,
           var_params_list = WRF_VAR_PARAMS_LIST,
-          map_geo_params_list = map_geo_features,
+          map_geo_params_list = this_map_geo_features,
           testref_pal_pth = TESTREF_PALETTE,
           absdiff_pal_pth = ABSDIFF_PALETTE,
           reldiff_pal_pth = RELDIFF_PALETTE,
