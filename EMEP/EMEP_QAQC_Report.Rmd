@@ -8432,7 +8432,10 @@ if (COLLATE_MOBS) {
   mobs_polls = OBSERVED_POLLS_EMEP_LINK[
     OBSERVED_POLLS
   ] %>%
-    stats::na.omit()
+    purrr::compact() %>%
+    purrr::map(
+      normalise_emep_var
+    )
   
   # Use the most nested submitted Test domain for MOBS collation.
   
@@ -8448,7 +8451,7 @@ if (COLLATE_MOBS) {
   
   emep_slice = read_emep(
     mobs_domain_file,
-    emep_var = unname(mobs_polls[1]),
+    emep_var = names(mobs_polls[[1]])[1],
     emep_crs = TEST_CRS,
     proxy = FALSE
   )
@@ -8628,27 +8631,35 @@ if (COLLATE_MOBS) {
   )
   
   unsupported_mobs = mobs_iterator %>%
-    dplyr::filter(
-      !purrr::map2_lgl(
+    dplyr::mutate(
+      missing_emep_vars = purrr::map2(
         emep_var,
         emep_vars_available,
-        ~ .x %in% .y
+        ~ setdiff(names(.x), .y)
       )
+    ) %>%
+    dplyr::filter(
+      purrr::map_int(missing_emep_vars, length) > 0
     ) %>%
     dplyr::distinct(
       obs_var,
-      emep_var,
       obs_time_resolution,
-      emep_file
+      emep_file,
+      missing_emep_vars
     )
   
   if (nrow(unsupported_mobs) > 0) {
   
     unsupported_message = unsupported_mobs %>%
       dplyr::mutate(
-        issue = glue::glue(
-          '{obs_var}: {emep_var} is not available in the ',
-          '{obs_time_resolution} EMEP file'
+        issue = purrr::pmap_chr(
+          list(obs_var, missing_emep_vars, obs_time_resolution),
+          function(obs_var, missing_emep_vars, obs_time_resolution) {
+            glue::glue(
+              "{obs_var}: {paste(missing_emep_vars, collapse = ', ')} ",
+              "not available in the {obs_time_resolution} EMEP file"
+            )
+          }
         )
       ) %>%
       dplyr::pull(
@@ -8657,7 +8668,7 @@ if (COLLATE_MOBS) {
       paste(
         collapse = '\n'
       )
-    
+  
     stop(
       paste0(
         'Some observation variables cannot be collated at their required ',

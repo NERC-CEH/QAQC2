@@ -1955,78 +1955,100 @@ collate_emep_mobs = function(
     emep_var,
     acceptable_model_coverage = 0.9
 ) {
-  
-  if (stringr::str_detect(
+
+  # Normalise the EMEP variable specification.
+  # A single variable is assigned a coefficient of 1.
+
+  if (is.character(emep_var) && length(emep_var) == 1) {
+
+    emep_var = stats::setNames(
+      1,
+      emep_var
+    )
+  }
+
+  checkmate::assert_numeric(
     emep_var,
-    '^D3_'
-  )) {
-    
+    names = 'named',
+    any.missing = FALSE,
+    min.len = 1
+  )
+
+  emep_vars = names(emep_var)
+
+  if (any(stringr::str_detect(emep_vars, '^D3_'))) {
+
     stop(
       'D3 variables are not currently supported for MOBS collation.',
       call. = FALSE
     )
   }
-  
+
   checkmate::assert_number(
     acceptable_model_coverage,
     lower = 0,
     upper = 1
   )
-  
+
   # Model data.
-  
+
   nc = ncdf4::nc_open(
     nc_pth
   )
-  
+
   on.exit(
     ncdf4::nc_close(nc),
     add = TRUE
   )
-  
+
   nc_date = get_emep_floordate(
     nc_pth
   )
-  
-  mod_data = ncdf4::ncvar_get(
-    nc,
-    varid = emep_var,
-    start = c(
-      i_index,
-      j_index,
-      1
-    ),
-    count = c(
-      1,
-      1,
-      -1
-    )
-  ) %>%
-    tibble::as_tibble() %>%
-    dplyr::mutate(
-      code = site_code,
-      .before = value
-    ) %>%
-    dplyr::rename(
-      mod = value
-    ) %>%
-    dplyr::bind_cols(
-      nc_date,
-      .
-    )
-  
-  # EMEP O3 is in ppb; observation repository concentrations are ug m-3.
-  
-  if (stringr::str_detect(
+
+  # Extract and combine the requested EMEP variables.
+
+  mod_values = purrr::imap(
     emep_var,
-    'ppb_O3'
-  )) {
-    
-    mod_data = mod_data %>%
-      dplyr::mutate(
-        mod = mod * 2
+    function(coefficient, var) {
+
+      values = ncdf4::ncvar_get(
+        nc,
+        varid = var,
+        start = c(
+          i_index,
+          j_index,
+          1
+        ),
+        count = c(
+          1,
+          1,
+          -1
+        )
       )
-  }
+
+      # EMEP O3 is in ppb; observations are in ug m-3.
+
+      if (stringr::str_detect(var, 'ppb_O3')) {
+        values = values * 2
+      }
+
+      values * coefficient
+    }
+  )
+
+  # An incomplete combination is treated as missing.
+
+  mod = Reduce(
+    `+`,
+    mod_values
+  )
+
+  mod_data = tibble::tibble(
+    date = nc_date$date,
+    code = site_code,
+    mod = as.numeric(mod)
+  )
+
   
   # Observation data.
   
@@ -10467,6 +10489,15 @@ normalise_emep_dep_unit = function(unit) {
   unit %>%
     stringr::str_replace('mgN/', 'mg/') %>%
     stringr::str_replace('mgS/', 'mg/')
+}
+
+normalise_emep_var = function(x) {
+  
+  if (is.character(x) && length(x) == 1) {
+    return(stats::setNames(1, x))
+  }
+  
+  x
 }
 
 normalise_mobs_report_tseries_config = function(x) {

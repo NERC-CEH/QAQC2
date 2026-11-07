@@ -465,8 +465,17 @@ OX_UNITS = 'ppb'
 
 # MOBS COLLATION -----------------------------------------------------------
 
-# Link observed pollutants to the corresponding EMEP model variables.
-OBSERVED_POLLS_EMEP_LINK = c(
+# Each observed pollutant can be linked to either:
+# - A single EMEP variable (character string).
+# - Multiple EMEP variables with coefficients (named numeric vector).
+#
+# For multiple variables, the modelled concentration is calculated as
+# the sum of each variable multiplied by its coefficient.
+#
+# Example:
+# so4 = SURF_ug_SO4 + 0.0768 * SURF_ug_SEASALT_F
+
+OBSERVED_POLLS_EMEP_LINK = list(
   no = 'SURF_ug_NO',
   no2 = 'SURF_ug_NO2',
   o3 = 'SURF_ppb_O3',
