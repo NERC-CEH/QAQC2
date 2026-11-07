@@ -2100,13 +2100,40 @@ if (NEED_MOBS) {
 
 if (COLLATE_MOBS) {
 
-  checkmate::assert_character(
+  checkmate::assert_list(
     OBSERVED_POLLS_EMEP_LINK,
     min.len = 1,
-    any.missing = FALSE,
-    unique = TRUE,
     names = 'unique',
     .var.name = 'OBSERVED_POLLS_EMEP_LINK'
+  )
+
+  # Validate individual mappings.
+
+  purrr::iwalk(
+    OBSERVED_POLLS_EMEP_LINK,
+    function(x, poll) {
+
+      if (is.character(x)) {
+
+        checkmate::assert_character(
+          x,
+          len = 1,
+          any.missing = FALSE,
+          .var.name = paste0('OBSERVED_POLLS_EMEP_LINK$', poll)
+        )
+
+      } else {
+
+        checkmate::assert_numeric(
+          x,
+          min.len = 1,
+          any.missing = FALSE,
+          finite = TRUE,
+          names = 'unique',
+          .var.name = paste0('OBSERVED_POLLS_EMEP_LINK$', poll)
+        )
+      }
+    }
   )
 
   invalid_observed_poll_links = setdiff(
