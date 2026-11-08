@@ -2084,6 +2084,26 @@ collate_emep_mobs = function(
     )
   }
   
+  # Convert long-format observations to wide format where necessary.
+  
+  if (
+    all(c('species', 'value') %in% names(obs_data)) &&
+    !obs_var %in% names(obs_data)
+  ) {
+    
+    obs_data = obs_data %>%
+      dplyr::filter(
+        species == obs_var
+      ) %>%
+      dplyr::select(
+        dplyr::any_of(c('date', 'start_date', 'end_date')),
+        value
+      ) %>%
+      dplyr::rename(
+        !!obs_var := value
+      )
+  }
+  
   has_date = 'date' %in% names(obs_data)
   has_start = 'start_date' %in% names(obs_data)
   has_end = 'end_date' %in% names(obs_data)
