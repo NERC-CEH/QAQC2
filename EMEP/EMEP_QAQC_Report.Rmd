@@ -8582,7 +8582,7 @@ if (COLLATE_MOBS) {
       poll_info
     ) %>%
     dplyr::filter(
-      poll %in% names(mobs_polls)
+      poll_info %in% names(mobs_polls)
     ) %>%
     dplyr::rename(
       obs_var = poll_info
