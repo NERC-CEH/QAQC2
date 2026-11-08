@@ -484,6 +484,14 @@ OBSERVED_POLLS_EMEP_LINK = list(
   pm2.5 = 'SURF_ug_PM25_rh50'
 )
 
+# Minimum percentage of valid model time steps required within an
+# observation interval, according to the aggregation method.
+
+MOBS_ACCEPTABLE_MODEL_COVERAGE = list(
+  mean = 90, # mean for concentration vars
+  sum = 100  # sum for dep vars
+)
+
 # MOBS EVALUATION ----------------------------------------------------------
 
 MOBS_EVAL_VARS = OBSERVED_POLLS

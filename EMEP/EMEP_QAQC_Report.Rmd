@@ -2154,6 +2154,22 @@ if (COLLATE_MOBS) {
       call. = FALSE
     )
   }
+  
+  checkmate::assert_list(
+    MOBS_ACCEPTABLE_MODEL_COVERAGE,
+    names = 'unique',
+    len = 2
+  )
+  
+  checkmate::assert_names(
+    names(MOBS_ACCEPTABLE_MODEL_COVERAGE),
+    permutation.of = c('mean', 'sum')
+  )
+  
+  purrr::walk(
+    MOBS_ACCEPTABLE_MODEL_COVERAGE,
+    ~ checkmate::assert_number(.x, lower = 0, upper = 100)
+  )
 }
 
 # MOBS evaluation.
@@ -8737,6 +8753,7 @@ if (COLLATE_MOBS) {
     purrr::safely(
       collate_emep_mobs
     ),
+    acceptable_model_coverage = MOBS_ACCEPTABLE_MODEL_COVERAGE,
     .options = furrr::furrr_options(
       seed = TRUE
     )
@@ -8763,20 +8780,8 @@ if (COLLATE_MOBS) {
     )
   )
   
-  if (!any(is_ok)) {
-    
-    logger::log_error(
-      'All MOBS collations failed - stopping.'
-    )
-    
-    stop(
-      'No successful site-pollutant combinations.',
-      call. = FALSE
-    )
-  }
-  
   if (any(!is_ok)) {
-    
+  
     mobs_failed = mobs_iterator[!is_ok, ] %>%
       dplyr::mutate(
         error = purrr::map_chr(
@@ -8784,23 +8789,44 @@ if (COLLATE_MOBS) {
           conditionMessage
         )
       )
-    
+  
     logger::log_warn(
       glue::glue(
         "{nrow(mobs_failed)} site-pollutant MOBS collations failed"
       )
     )
-    
+  
     purrr::pwalk(
       mobs_failed,
       function(code, obs_var, emep_var, error, ...) {
-        
+  
+        emep_var_label = paste(
+          paste0(
+            emep_var,
+            ' * ',
+            names(emep_var)
+          ),
+          collapse = ' + '
+        )
+  
         logger::log_warn(
           glue::glue(
-            "{code}, {obs_var} ({emep_var}): {error}"
+            "{code}, {obs_var} ({emep_var_label}): {error}"
           )
         )
       }
+    )
+  }
+  
+  if (!any(is_ok)) {
+  
+    logger::log_error(
+      'All MOBS collations failed - stopping.'
+    )
+  
+    stop(
+      'No successful site-pollutant combinations.',
+      call. = FALSE
     )
   }
   

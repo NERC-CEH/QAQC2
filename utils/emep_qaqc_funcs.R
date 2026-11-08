@@ -1953,7 +1953,7 @@ collate_emep_mobs = function(
     obs_file,
     obs_var,
     emep_var,
-    acceptable_model_coverage = 0.9
+    acceptable_model_coverage = list(mean = 90, sum = 100)
 ) {
 
   # Normalise the EMEP variable specification.
@@ -1971,6 +1971,7 @@ collate_emep_mobs = function(
     emep_var,
     names = 'named',
     any.missing = FALSE,
+    finite = TRUE,
     min.len = 1
   )
 
@@ -1984,10 +1985,24 @@ collate_emep_mobs = function(
     )
   }
 
-  checkmate::assert_number(
+  checkmate::assert_list(
     acceptable_model_coverage,
-    lower = 0,
-    upper = 1
+    len = 2,
+    names = 'unique'
+  )
+  
+  checkmate::assert_names(
+    names(acceptable_model_coverage),
+    permutation.of = c('mean', 'sum')
+  )
+  
+  purrr::walk(
+    acceptable_model_coverage,
+    ~ checkmate::assert_number(
+      .x,
+      lower = 0,
+      upper = 100
+    )
   )
 
   # Model data.
@@ -2233,8 +2248,22 @@ collate_emep_mobs = function(
       by = 'date'
     )
   
-  # Return to the original observation intervals. The model value is only
-  # retained when model data are available for the complete interval.
+  # Determine the aggregation method and corresponding coverage threshold.
+  # Deposition variables are summed; all other variables are averaged.
+  
+  aggregation_method = if (
+    stringr::str_detect(obs_var, '_(d|w)?dep$')
+  ) {
+    'sum'
+  } else {
+    'mean'
+  }
+  
+  coverage_threshold = acceptable_model_coverage[[aggregation_method]]
+  
+  # Return to the original observation intervals, calculating the mean
+  # concentration or total deposition where the required model coverage
+  # threshold is satisfied.
   
   both = interval_data %>%
     dplyr::group_by(
@@ -2244,14 +2273,16 @@ collate_emep_mobs = function(
     ) %>%
     dplyr::summarise(
       obs = dplyr::first(obs),
-      model_coverage = mean(is.finite(mod)),
+      model_coverage = 100 * mean(is.finite(mod)),
       mod = if (
-        model_coverage >= acceptable_model_coverage
+        model_coverage >= coverage_threshold &&
+        model_coverage > 0
       ) {
-        mean(
-          mod,
-          na.rm = TRUE
-        )
+        if (aggregation_method == 'sum') {
+          sum(mod, na.rm = TRUE)
+        } else {
+          mean(mod, na.rm = TRUE)
+        }
       } else {
         NA_real_
       },
