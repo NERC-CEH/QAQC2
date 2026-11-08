@@ -8572,11 +8572,6 @@ if (COLLATE_MOBS) {
     'Sites_used.rds'
   )
   
-  readr::write_rds(
-    sites_used,
-    sites_used_pth
-  )
-  
   logger::log_info(
     glue::glue(
       "Saved metadata for {nrow(sites_used)} observation sites to Sites_used.rds"
@@ -8836,6 +8831,34 @@ if (COLLATE_MOBS) {
     split(
       .$code
     )
+  
+  # Retain only sites with successfully collated MOBS data.
+
+  successful_mobs = mobs_iterator[is_ok, ] %>%
+    dplyr::distinct(
+      code,
+      obs_var
+    )
+  
+  sites_used = sites_used %>%
+    dplyr::filter(
+      code %in% successful_mobs$code
+    ) %>%
+    dplyr::mutate(
+      poll_info = purrr::map2(
+        code,
+        poll_info,
+        ~ intersect(
+          .y,
+          successful_mobs$obs_var[successful_mobs$code == .x]
+        )
+      )
+    )
+  
+  readr::write_rds(
+    sites_used,
+    sites_used_pth
+  )
   
   mobs_wide = mobs_list %>%
     purrr::map(
