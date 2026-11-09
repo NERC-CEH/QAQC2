@@ -10605,6 +10605,30 @@ normalise_mobs_report_tseries_config = function(x) {
   out
 }
 
+normalise_obs_poll_info = function(x) {
+  
+  if (is.data.frame(x)) {
+    
+    if (!'poll' %in% names(x)) {
+      stop(
+        "Observation poll_info tibble must contain a 'poll' column.",
+        call. = FALSE
+      )
+    }
+    
+    return(unique(x$poll))
+  }
+  
+  if (is.character(x)) {
+    return(unique(x))
+  }
+  
+  stop(
+    'Unsupported observation poll_info structure.',
+    call. = FALSE
+  )
+}
+
 override_emep_time_range = function(
     time_range,
     start_date = NULL,

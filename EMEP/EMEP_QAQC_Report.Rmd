@@ -8578,36 +8578,42 @@ if (COLLATE_MOBS) {
     )
   )
   
-  mobs_iterator = sites_used %>%
-    sf::st_drop_geometry() %>%
-    dplyr::select(
-      code,
-      source,
-      obs_file = output_pth,
-      i,
-      j,
-      obs_time_resolution,
-      poll_info
-    ) %>%
-    tidyr::unnest(
-      poll_info
-    ) %>%
-    dplyr::filter(
-      poll_info %in% names(mobs_polls)
-    ) %>%
-    dplyr::rename(
-      obs_var = poll_info
-    ) %>%
-    dplyr::mutate(
-      emep_var = unname(
-        mobs_polls[obs_var]
-      )
-    ) %>%
-    dplyr::filter(
-      !is.na(i),
-      !is.na(j),
-      !is.na(obs_file)
+mobs_iterator = sites_used %>%
+  sf::st_drop_geometry() %>%
+  dplyr::select(
+    code,
+    source,
+    obs_file = output_pth,
+    i,
+    j,
+    obs_time_resolution,
+    poll_info
+  ) %>%
+  dplyr::mutate(
+    poll_info = purrr::map(
+      poll_info,
+      normalise_obs_poll_info
     )
+  ) %>%
+  tidyr::unnest(
+    poll_info
+  ) %>%
+  dplyr::filter(
+    poll_info %in% names(mobs_polls)
+  ) %>%
+  dplyr::rename(
+    obs_var = poll_info
+  ) %>%
+  dplyr::mutate(
+    emep_var = unname(
+      mobs_polls[obs_var]
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(i),
+    !is.na(j),
+    !is.na(obs_file)
+  )
   
   select_required_emep_file = function(
     emep_dir,
