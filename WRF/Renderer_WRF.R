@@ -43,7 +43,11 @@ source(
 # QAQC user
 # -------------------------------------------------------------------------
 
-qaqc_user_id = Sys.info()[['user']] %||% NA_character_
+qaqc_user_id = Sys.getenv('USER', unset = '')
+
+if (!nzchar(qaqc_user_id)) {
+  qaqc_user_id = Sys.info()[['user']]
+}
 
 if (
   is.na(qaqc_user_id) ||
