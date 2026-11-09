@@ -23836,7 +23836,7 @@ resolve_summary_map_vars = function(
   # 'all' is a shortcut for all configured ordinary variables only.
   # Ratio variables must always be explicitly requested.
   
-  if (identical(selection, 'all')) {
+  if ('all' %in% selection) {
     
     return(
       resolve_selection(
