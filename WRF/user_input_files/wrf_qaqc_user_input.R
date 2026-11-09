@@ -639,5 +639,6 @@ USERS = c(
   jansch = 'Janice Scheffler',
   racbec = 'Rachel Beck',
   damtan = 'Damaris Tan',
-  chrhoo = 'Christina Hood'
+  chrhoo = 'Christina Hood',
+  marmon = 'Maria Monterroso Perez'
 )
