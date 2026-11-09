@@ -488,17 +488,37 @@ align_summary_grid = function(
     )
   )
   
-  if (!same_crs || !same_grid) {
+  same_dimensions = identical(
+    dim(x),
+    dim(reference)
+  )
+  
+  # Regrid whenever the CRS, grid geometry or dimensions differ.
+  
+  if (!same_crs || !same_grid || !same_dimensions) {
     
     x = stars::st_warp(
       x,
       dest = reference,
-      use_gdal = TRUE,
-      no_data_value = -9999
+      use_gdal = FALSE
     )
+  }
+  
+  # Verify that the resulting grids have matching dimensions.
+  
+  if (!identical(dim(x), dim(reference))) {
     
-    stars::st_dimensions(x) = stars::st_dimensions(reference)
-    
+    stop(
+      glue::glue(
+        "Grid alignment failed: ",
+        "same_crs={same_crs}, ",
+        "same_grid={same_grid}, ",
+        "same_dimensions={same_dimensions}; ",
+        "warped dimensions={paste(dim(x), collapse = ' x ')}; ",
+        "expected={paste(dim(reference), collapse = ' x ')}"
+      ),
+      call. = FALSE
+    )
   }
   
   x
