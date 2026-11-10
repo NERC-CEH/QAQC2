@@ -1665,9 +1665,21 @@ if (SUMMARY_MAP_TASKS) {
     file_tag = SUMMARY_MAP_TEST_FILE_TAG
   )
 
+  summary_map_ref_validation_file = if (
+    !is.null(domain_setup$ref_dir[[1]])
+  ) {
+    select_emep_file_from_dir(
+      EMEP_dir = domain_setup$ref_dir[[1]],
+      file_tag = SUMMARY_MAP_REF_FILE_TAG
+    )
+  } else {
+    NULL
+  }
+  
   validated_summary_map_vars = resolve_summary_map_vars(
     selection = SUMMARY_MAP_VARS,
     test_file = summary_map_validation_file,
+    ref_file = summary_map_ref_validation_file,
     var_params_list = EMEP_VAR_PARAMS_LIST
   )
   

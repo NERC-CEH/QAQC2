@@ -23742,6 +23742,7 @@ resolve_summary_map_vars = function(
     selection,
     test_file,
     var_params_list,
+    ref_file = NULL,
     input_name = 'SUMMARY_MAP_VARS',
     available = NULL
 ) {
@@ -23756,9 +23757,25 @@ resolve_summary_map_vars = function(
     )
   }
   
-  available_file_vars = get_emep_vars(
+  # Get variables available in the Test and Reference files.
+  
+  test_file_vars = get_emep_vars(
     nc_file = test_file,
     var_keywords = NULL
+  )
+  
+  ref_file_vars = if (!is.null(ref_file)) {
+    get_emep_vars(
+      nc_file = ref_file,
+      var_keywords = NULL
+    )
+  } else {
+    test_file_vars
+  }
+  
+  available_file_vars = intersect(
+    test_file_vars,
+    ref_file_vars
   )
   
   param_vars = names(
@@ -23767,10 +23784,7 @@ resolve_summary_map_vars = function(
   
   ratio_param_vars = param_vars %>%
     purrr::keep(
-      ~ stringr::str_detect(
-        .x,
-        '_vs_'
-      )
+      ~ stringr::str_detect(.x, '_vs_')
     )
   
   testref_param_vars = param_vars %>%
@@ -23779,10 +23793,7 @@ resolve_summary_map_vars = function(
         !is.null(
           get_var_param(
             var = var,
-            key = c(
-              'maps',
-              'testref_breaks'
-            ),
+            key = c('maps', 'testref_breaks'),
             var_params_list = var_params_list,
             default = NULL
           )
@@ -23796,10 +23807,7 @@ resolve_summary_map_vars = function(
         !is.null(
           get_var_param(
             var = var,
-            key = c(
-              'maps',
-              'ratio_breaks'
-            ),
+            key = c('maps', 'ratio_breaks'),
             var_params_list = var_params_list,
             default = NULL
           )
@@ -23807,17 +23815,14 @@ resolve_summary_map_vars = function(
       }
     )
   
-  
-  # Ordinary variables must themselves exist in the EMEP file.
+  # Ordinary variables must exist in the EMEP files.
   
   available_testref_vars = available_file_vars %>%
     intersect(
       testref_param_vars
     )
   
-  
-  # Ratio entries are derived variables. The ratio name itself does not
-  # occur in the EMEP file; both variables forming the ratio must occur.
+  # Ratio variables require both component variables.
   
   available_ratio_vars = ratio_mappable_param_vars %>%
     purrr::keep(
@@ -23825,54 +23830,81 @@ resolve_summary_map_vars = function(
         
         ratio_vars = stringr::str_split(
           var,
-          '_vs_',
-          simplify = TRUE
-        )
+          '_vs_'
+        )[[1]]
         
-        ncol(ratio_vars) == 2 &&
-          all(
-            ratio_vars %in%
-              available_file_vars
-          )
+        length(ratio_vars) == 2 &&
+          all(ratio_vars %in% available_file_vars)
       }
     )
   
-  
-  # If a narrower set of available variables has been supplied,
-  # restrict both ordinary and ratio variables to that set.
+  # Apply any additional restriction on available variables.
   
   if (!is.null(available)) {
     
-    available_testref_vars =
-      available_testref_vars %>%
-      intersect(
-        available
-      )
+    available_testref_vars = intersect(
+      available_testref_vars,
+      available
+    )
     
-    available_ratio_vars =
-      available_ratio_vars %>%
-      intersect(
-        available
-      )
+    available_ratio_vars = intersect(
+      available_ratio_vars,
+      available
+    )
   }
   
-  
-  # 'all' is a shortcut for all configured ordinary variables only.
-  # Ratio variables must always be explicitly requested.
+  # 'all' selects ordinary variables available in Test and Reference.
+  # Exclusions are resolved against Test variables first, allowing
+  # users to exclude variables already absent from Reference.
   
   if ('all' %in% selection) {
     
+    test_available_vars = intersect(
+      test_file_vars,
+      testref_param_vars
+    )
+    
+    if (!is.null(available)) {
+      test_available_vars = intersect(
+        test_available_vars,
+        available
+      )
+    }
+    
+    selected_test_vars = resolve_selection(
+      selection = selection,
+      available = test_available_vars,
+      input_name = input_name
+    )
+    
+    skipped_ref_vars = setdiff(
+      selected_test_vars,
+      available_testref_vars
+    )
+    
+    if (
+      !is.null(ref_file) &&
+      length(skipped_ref_vars) > 0
+    ) {
+      
+      logger::log_warn(
+        glue::glue(
+          "Summary maps: skipping {length(skipped_ref_vars)} ",
+          "variables unavailable in Reference:\n  ",
+          "{paste(skipped_ref_vars, collapse = '\n  ')}"
+        )
+      )
+    }
+    
     return(
-      resolve_selection(
-        selection = selection,
-        available = available_testref_vars,
-        input_name = input_name
+      intersect(
+        selected_test_vars,
+        available_testref_vars
       )
     )
   }
   
-  
-  # Explicit selections may contain both ordinary and ratio variables.
+  # Explicit selections may contain ordinary and ratio variables.
   
   available_map_vars = c(
     available_testref_vars,
@@ -23880,41 +23912,63 @@ resolve_summary_map_vars = function(
   ) %>%
     unique()
   
-  missing_param_vars = selection %>%
+  missing_param_vars = setdiff(
+    selection,
+    param_vars
+  )
+  
+  requested_testref_vars = setdiff(
+    selection,
+    ratio_param_vars
+  )
+  
+  requested_ratio_vars = intersect(
+    selection,
+    ratio_param_vars
+  )
+  
+  # Check ordinary variables in Test and Reference.
+  
+  missing_test_file_vars = setdiff(
+    requested_testref_vars,
+    test_file_vars
+  )
+  
+  missing_ref_file_vars = if (!is.null(ref_file)) {
     setdiff(
-      param_vars
+      requested_testref_vars,
+      ref_file_vars
     )
+  } else {
+    character()
+  }
   
-  requested_testref_vars = selection %>%
-    setdiff(
-      ratio_param_vars
-    )
+  # Identify the components required for ratio maps.
   
-  requested_ratio_vars = selection %>%
-    intersect(
-      ratio_param_vars
-    )
-  
-  missing_file_vars = requested_testref_vars %>%
-    setdiff(
-      available_file_vars
-    )
-  
-  missing_ratio_file_vars = requested_ratio_vars %>%
+  requested_ratio_components = requested_ratio_vars %>%
     purrr::map(
-      ~ stringr::str_split(
-        .x,
-        '_vs_',
-        simplify = TRUE
-      )
+      ~ stringr::str_split(.x, '_vs_')[[1]]
     ) %>%
     unlist(
       use.names = FALSE
     ) %>%
-    setdiff(
-      available_file_vars
-    ) %>%
     unique()
+  
+  missing_test_ratio_vars = setdiff(
+    requested_ratio_components,
+    test_file_vars
+  )
+  
+  missing_ref_ratio_vars = if (!is.null(ref_file)) {
+    setdiff(
+      requested_ratio_components,
+      ref_file_vars
+    )
+  } else {
+    character()
+  }
+  
+  # Check map parameters.
   
   missing_testref_map_params = requested_testref_vars %>%
     intersect(
@@ -23924,10 +23978,10 @@ resolve_summary_map_vars = function(
       testref_param_vars
     )
   
-  missing_ratio_map_params = requested_ratio_vars %>%
-    setdiff(
-      ratio_mappable_param_vars
-    )
+  missing_ratio_map_params = setdiff(
+    requested_ratio_vars,
+    ratio_mappable_param_vars
+  )
   
   unavailable_vars = selection %>%
     intersect(
@@ -23937,46 +23991,63 @@ resolve_summary_map_vars = function(
       available_map_vars
     )
   
+  # Report validation errors.
+  
   if (length(missing_param_vars) > 0) {
     stop(
       paste0(
         'The following variables requested in ',
         input_name,
         ' are not defined in EMEP_VAR_PARAMS_LIST:\n  ',
-        paste(
-          missing_param_vars,
-          collapse = '\n  '
-        )
+        paste(missing_param_vars, collapse = '\n  ')
       ),
       call. = FALSE
     )
   }
   
-  if (length(missing_file_vars) > 0) {
+  if (length(missing_test_file_vars) > 0) {
     stop(
       paste0(
         'The following variables requested in ',
         input_name,
-        ' are not available in the selected EMEP file:\n  ',
-        paste(
-          missing_file_vars,
-          collapse = '\n  '
-        )
+        ' are not available in the Test EMEP file:\n  ',
+        paste(missing_test_file_vars, collapse = '\n  ')
       ),
       call. = FALSE
     )
   }
   
-  if (length(missing_ratio_file_vars) > 0) {
+  if (length(missing_ref_file_vars) > 0) {
+    stop(
+      paste0(
+        'The following variables requested in ',
+        input_name,
+        ' are not available in the Reference EMEP file:\n  ',
+        paste(missing_ref_file_vars, collapse = '\n  ')
+      ),
+      call. = FALSE
+    )
+  }
+  
+  if (length(missing_test_ratio_vars) > 0) {
     stop(
       paste0(
         'The following variables required for ratio maps requested in ',
         input_name,
-        ' are not available in the selected EMEP file:\n  ',
-        paste(
-          missing_ratio_file_vars,
-          collapse = '\n  '
-        )
+        ' are not available in the Test EMEP file:\n  ',
+        paste(missing_test_ratio_vars, collapse = '\n  ')
+      ),
+      call. = FALSE
+    )
+  }
+  
+  if (length(missing_ref_ratio_vars) > 0) {
+    stop(
+      paste0(
+        'The following variables required for ratio maps requested in ',
+        input_name,
+        ' are not available in the Reference EMEP file:\n  ',
+        paste(missing_ref_ratio_vars, collapse = '\n  ')
       ),
       call. = FALSE
     )
@@ -23989,10 +24060,7 @@ resolve_summary_map_vars = function(
         input_name,
         ' do not have maps$testref_breaks defined in ',
         'EMEP_VAR_PARAMS_LIST:\n  ',
-        paste(
-          missing_testref_map_params,
-          collapse = '\n  '
-        )
+        paste(missing_testref_map_params, collapse = '\n  ')
       ),
       call. = FALSE
     )
@@ -24005,10 +24073,7 @@ resolve_summary_map_vars = function(
         input_name,
         ' do not have maps$ratio_breaks defined in ',
         'EMEP_VAR_PARAMS_LIST:\n  ',
-        paste(
-          missing_ratio_map_params,
-          collapse = '\n  '
-        )
+        paste(missing_ratio_map_params, collapse = '\n  ')
       ),
       call. = FALSE
     )
@@ -24020,10 +24085,7 @@ resolve_summary_map_vars = function(
         'The following variables requested in ',
         input_name,
         ' are not included in the available map variables:\n  ',
-        paste(
-          unavailable_vars,
-          collapse = '\n  '
-        )
+        paste(unavailable_vars, collapse = '\n  ')
       ),
       call. = FALSE
     )
