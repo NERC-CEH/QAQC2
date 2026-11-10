@@ -1639,13 +1639,11 @@ calculate_summary_diff = function(
   
   names(rel_diff) = 'rel_diff'
   
+  diff_vals = as.numeric(abs_diff[[1]])
+  
   if (
-    all(
-      dplyr::near(
-        as.numeric(abs_diff[[1]]),
-        0
-      )
-    )
+    any(is.finite(diff_vals)) &&
+    all(dplyr::near(diff_vals[is.finite(diff_vals)], 0))
   ) {
     
     abs_diff[[1]][] = NA_real_
