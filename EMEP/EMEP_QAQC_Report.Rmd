@@ -8853,10 +8853,18 @@ if (COLLATE_MOBS) {
       poll_info = purrr::map2(
         code,
         poll_info,
-        ~ intersect(
-          .y,
-          successful_mobs$obs_var[successful_mobs$code == .x]
-        )
+        function(site_code, info) {
+  
+          successful_polls = successful_mobs$obs_var[
+            successful_mobs$code == site_code
+          ]
+  
+          if (is.data.frame(info)) {
+            return(dplyr::filter(info, poll %in% successful_polls))
+          }
+  
+          intersect(info, successful_polls)
+        }
       )
     )
   
