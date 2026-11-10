@@ -153,6 +153,30 @@ if (ref_submitted && (!exists('REF_CRS') || is.null(REF_CRS))) {
   stop("REF_CRS must be specified when a reference run is submitted.", call. = FALSE)
 }
 
+# Load variable parameters ------------------------------------------------
+
+checkmate::assert_string(
+  EMEP_VAR_PARAMS_FILE,
+  min.chars = 1
+)
+
+checkmate::assert_file_exists(
+  EMEP_VAR_PARAMS_FILE
+)
+
+ source(EMEP_VAR_PARAMS_FILE)
+
+if (!exists('EMEP_VAR_PARAMS_LIST')) {
+  stop(
+    paste0(
+      "The EMEP variable parameter file did not create ",
+      "EMEP_VAR_PARAMS_LIST:\n  ",
+      EMEP_VAR_PARAMS_FILE
+    ),
+    call. = FALSE
+  )
+}
+
 # load qaqc input files
 
 source(fs::path('../utils/myquicktext.R'))
@@ -525,29 +549,6 @@ NEED_MOBS =
   isTRUE(MOBS_EVALUATION_OUTPUTS) ||
   isTRUE(PLOT_MOBS_TSERIES)
 
-# Load variable parameters ------------------------------------------------
-
-checkmate::assert_string(
-  EMEP_VAR_PARAMS_FILE,
-  min.chars = 1
-)
-
-checkmate::assert_file_exists(
-  EMEP_VAR_PARAMS_FILE
-)
-
- source(EMEP_VAR_PARAMS_FILE)
-
-if (!exists('EMEP_VAR_PARAMS_LIST')) {
-  stop(
-    paste0(
-      "The EMEP variable parameter file did not create ",
-      "EMEP_VAR_PARAMS_LIST:\n  ",
-      EMEP_VAR_PARAMS_FILE
-    ),
-    call. = FALSE
-  )
-}
 
 checkmate::assert_choice(
   REPORT_STYLE,
