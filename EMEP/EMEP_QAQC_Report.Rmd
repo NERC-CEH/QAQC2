@@ -6736,34 +6736,20 @@ summary_map_leaflet = NULL
 report_map_height = NULL
 
 if (create_summary_map_data) {
-  
-  # Use the first submitted Test domain to identify the variables available
-  # in the selected mapping file.
-  
-  summary_map_test_file = select_emep_file_from_dir(
-    EMEP_dir = domain_setup$test_dir[[1]],
-    file_tag = SUMMARY_MAP_TEST_FILE_TAG
-  )
-  
-  # Resolve variables requested for mapping.
-  
-  summary_map_vars = resolve_summary_map_vars(
-    selection = SUMMARY_MAP_VARS,
-    test_file = summary_map_test_file,
-    var_params_list = EMEP_VAR_PARAMS_LIST
-  )
-  
+
+  # Use the variables resolved during input validation.
+
+  summary_map_vars = validated_summary_map_vars
+
   if (length(summary_map_vars) == 0) {
     stop(
-      paste0(
-        "No requested summary-map variables are available for plotting."
-      ),
+      'No requested summary-map variables are available for plotting.',
       call. = FALSE
     )
   }
-  
+
   # Resolve the subset to be displayed in the HTML report.
-  
+
   summary_map_vars_report = resolve_selection(
     selection = SUMMARY_MAP_VARS_REPORT,
     available = summary_map_vars,
