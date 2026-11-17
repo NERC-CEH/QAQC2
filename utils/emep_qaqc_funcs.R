@@ -521,6 +521,11 @@ align_summary_grid = function(
     )
   }
   
+  # Standardise dimension metadata after alignment to avoid
+  # floating-point differences preventing stars arithmetic.
+  
+  stars::st_dimensions(x) = stars::st_dimensions(reference)
+  
   x
 }
 
@@ -1601,7 +1606,7 @@ calculate_summary_diff = function(
     x = ref_s,
     reference = test_s
   )
-  
+
   names(test_s) = run_labels[[1]]
   names(ref_s) = run_labels[[2]]
   
