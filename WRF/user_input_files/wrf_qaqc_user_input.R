@@ -209,6 +209,9 @@ DIFF_DIRECTION = 'test_minus_ref'
 # Palettes may be specified as an NCL palette file or a palette name.
 # Supported palette namespaces are 'khroma::<palette>', 'scico::<palette>',
 # 'viridis::<palette>', 'hcl::<palette>' and 'brewer::<palette>'.
+# Prefix a palette specification with '-' to reverse its colour order.
+# This applies to both named palettes and NCL palette files.
+# e.g. '-brewer::RdBu', paste0('-', fs::path(NCL_PALETTE_DIR, 'NCV_blu_red.rgb')
 TESTREF_PALETTE = fs::path(NCL_PALETTE_DIR, 'WhiteBlueGreenYellowRed.rgb')
 
 ABSDIFF_PALETTE = fs::path(NCL_PALETTE_DIR, 'NCV_blu_red.rgb')
@@ -552,7 +555,11 @@ MOBS_MAP_STATS_EXCLUDE_BY_VAR = list(
 )
 
 # Palettes used for MOBS model-statistic maps.
-
+# Supported palette namespaces are 'khroma::<palette>', 'scico::<palette>',
+# 'viridis::<palette>', 'hcl::<palette>' and 'brewer::<palette>'.
+# Prefix a palette specification with '-' to reverse its colour order.
+# This applies to both named palettes and NCL palette files.
+# e.g. '-brewer::RdBu', paste0('-', fs::path(NCL_PALETTE_DIR, 'NCV_blu_red.rgb')
 MOBS_MAP_MB_PALETTE = 'brewer::RdBu'
 MOBS_MAP_NMB_PALETTE = 'brewer::RdBu'
 MOBS_MAP_RMSE_PALETTE = 'viridis::magma'

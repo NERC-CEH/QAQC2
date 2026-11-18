@@ -13076,617 +13076,6 @@ plot_mobs_stat_map = function(
   m
 }
 
-plot_mobs_stat_map_layers = function(
-    sites_df,
-    stat,
-    var_params_list,
-    stat_lookup,
-    var_param_names = NULL,
-    breaks_by_var = NULL,
-    palette_by_var = NULL,
-    palette_default = fs::path(
-      PALETTE_DIR,
-      ABSDIFF_PALETTE
-    ),
-    basemap = c(
-      'world_topo',
-      'satellite'
-    ),
-    radius = 7,
-    stroke = TRUE,
-    weight = 0.8,
-    fill_opacity = 0.9,
-    digits = 4,
-    legend_position = 'topright',
-    legend_font_size = 10,
-    legend_title_size = 11,
-    legend_swatch_width = 13,
-    legend_swatch_height = 11,
-    legend_line_height = 12
-) {
-  
-  basemap = match.arg(
-    basemap,
-    choices = c(
-      'world_topo',
-      'satellite'
-    ),
-    several.ok = TRUE
-  )
-  
-  if (!inherits(sites_df, 'data.frame')) {
-    stop(
-      'sites_df must be a data frame or sf object.'
-    )
-  }
-  
-  req_cols = c(
-    'code',
-    'var',
-    stat
-  )
-  
-  if (!inherits(sites_df, 'sf')) {
-    req_cols = c(
-      req_cols,
-      'longitude',
-      'latitude'
-    )
-  }
-  
-  missing_cols = setdiff(
-    req_cols,
-    names(sites_df)
-  )
-  
-  if (length(missing_cols) > 0) {
-    stop(
-      'sites_df is missing required column(s): ',
-      paste(
-        missing_cols,
-        collapse = ', '
-      )
-    )
-  }
-  
-  
-  # Helper functions.
-  
-  popup_value = function(x) {
-    
-    if (is.numeric(x)) {
-      
-      out = format(
-        round(
-          x,
-          digits
-        ),
-        trim = TRUE,
-        scientific = FALSE,
-        nsmall = 0
-      )
-      
-      out[is.na(x)] = ''
-      
-      return(out)
-    }
-    
-    x = as.character(x)
-    x[is.na(x)] = ''
-    
-    x
-  }
-  
-  
-  stat_label = function(x) {
-    unname(
-      stat_lookup[x] %||% x
-    )
-  }
-  
-  
-  get_var_param_nm = function(var_nm) {
-    
-    if (is.null(var_param_names)) {
-      return(var_nm)
-    }
-    
-    mapped_var = unname(
-      var_param_names[var_nm]
-    )
-    
-    if (
-      length(mapped_var) == 0 ||
-      is.na(mapped_var)
-    ) {
-      var_nm
-    } else {
-      mapped_var
-    }
-  }
-  
-  
-  get_var_label = function(var_nm) {
-    
-    var_param_nm = get_var_param_nm(
-      var_nm
-    )
-    
-    get_var_param(
-      var = var_param_nm,
-      key = 'short_lab',
-      var_params_list = var_params_list,
-      default = var_nm
-    )
-  }
-  
-  
-  get_palette_spec = function(var_nm) {
-    
-    if (
-      !is.null(palette_by_var) &&
-      var_nm %in% names(palette_by_var)
-    ) {
-      
-      palette_by_var[[var_nm]]
-      
-    } else {
-      
-      palette_default
-    }
-  }
-  
-  
-  get_breaks = function(
-    var_nm,
-    df_var
-  ) {
-    
-    if (
-      !is.null(breaks_by_var) &&
-      var_nm %in% names(breaks_by_var)
-    ) {
-      
-      breaks = breaks_by_var[[var_nm]]
-      
-    } else {
-      
-      breaks = resolve_modstat_map_breaks(
-        stat = stat,
-        var_nm = get_var_param_nm(
-          var_nm
-        ),
-        sites_df = df_var,
-        var_params_list = var_params_list
-      )
-    }
-    
-    x = df_var[[stat]]
-    x = x[is.finite(x)]
-    
-    if (length(x) > 0) {
-      
-      breaks = extend_map_breaks_to_data_range(
-        breaks = breaks,
-        data_min = min(
-          x,
-          na.rm = TRUE
-        ),
-        data_max = max(
-          x,
-          na.rm = TRUE
-        )
-      )
-    }
-    
-    breaks
-  }
-  
-  
-  # Retain only variables with finite values for this statistic.
-  
-  var_names = unique(
-    sites_df$var
-  )
-  
-  var_names = var_names[
-    purrr::map_lgl(
-      var_names,
-      function(var_nm) {
-        
-        x = sites_df[
-          sites_df$var == var_nm,
-          stat
-        ]
-        
-        if (inherits(x, 'data.frame')) {
-          x = x[[1]]
-        }
-        
-        any(
-          is.finite(x)
-        )
-      }
-    )
-  ]
-  
-  if (length(var_names) == 0) {
-    stop(
-      "Statistic '",
-      stat,
-      "' contains no finite values."
-    )
-  }
-  
-  
-  # Set up basemaps.
-  
-  basemap_lookup = c(
-    world_topo = 'Esri.WorldTopoMap',
-    satellite = 'Esri.WorldImagery'
-  )
-  
-  basemap_labels = c(
-    world_topo = 'World topo',
-    satellite = 'Satellite'
-  )
-  
-  basemap_groups = unname(
-    basemap_labels[basemap]
-  )
-  
-  m = leaflet::leaflet()
-  
-  for (this_basemap in basemap) {
-    
-    m = m %>%
-      leaflet::addProviderTiles(
-        provider = basemap_lookup[[this_basemap]],
-        group = basemap_labels[[this_basemap]]
-      )
-  }
-  
-  
-  # Add one layer and one legend for each variable.
-  
-  group_names = purrr::map_chr(
-    var_names,
-    get_var_label
-  )
-  
-  legend_ids = paste0(
-    'var-',
-    seq_along(var_names)
-  )
-  
-  names(legend_ids) = group_names
-  
-  for (i in seq_along(var_names)) {
-    
-    var_nm = var_names[[i]]
-    group_nm = group_names[[i]]
-    
-    df_var = sites_df %>%
-      dplyr::filter(
-        var == var_nm
-      )
-    
-    if (nrow(df_var) == 0) {
-      next
-    }
-    
-    these_breaks = get_breaks(
-      var_nm = var_nm,
-      df_var = df_var
-    )
-    
-    pal_cols = resolve_palette(
-      pal_spec = get_palette_spec(
-        var_nm
-      ),
-      n = length(these_breaks) - 1
-    )
-    
-    pal = leaflet::colorBin(
-      palette = pal_cols,
-      domain = df_var[[stat]],
-      bins = these_breaks,
-      na.color = '#BDBDBD',
-      right = FALSE
-    )
-    
-    df_var = df_var %>%
-      dplyr::mutate(
-        marker_colour = pal(
-          .data[[stat]]
-        )
-      )
-    
-    
-    # Popup.
-    
-    info_vars0 = c(
-      'code',
-      'station',
-      'site',
-      'network',
-      'elev(m)',
-      'year'
-    )
-    
-    info_vars = intersect(
-      info_vars0,
-      names(df_var)
-    )
-    
-    popup_labels = c(
-      stringr::str_to_sentence(
-        info_vars
-      ),
-      stat_label(stat)
-    )
-    
-    popup_vars = c(
-      info_vars,
-      stat
-    )
-    
-    names(popup_labels) = popup_vars
-    
-    popup_content = purrr::map2(
-      popup_labels,
-      names(popup_labels),
-      function(lbl, nm) {
-        
-        stringr::str_c(
-          '<b>',
-          lbl,
-          ':</b> ',
-          popup_value(
-            df_var[[nm]]
-          )
-        )
-      }
-    ) %>%
-      purrr::transpose() %>%
-      stringi::stri_join_list(
-        sep = '<br/>'
-      )
-    
-    df_var = df_var %>%
-      dplyr::mutate(
-        popup_content = popup_content
-      )
-    
-    
-    # Markers.
-    
-    if (inherits(df_var, 'sf')) {
-      
-      m = m %>%
-        leaflet::addCircleMarkers(
-          data = df_var,
-          radius = radius,
-          stroke = stroke,
-          weight = weight,
-          color = ~marker_colour,
-          fillColor = ~marker_colour,
-          fillOpacity = fill_opacity,
-          popup = ~popup_content,
-          group = group_nm
-        )
-      
-    } else {
-      
-      m = m %>%
-        leaflet::addCircleMarkers(
-          data = df_var,
-          lng = ~longitude,
-          lat = ~latitude,
-          radius = radius,
-          stroke = stroke,
-          weight = weight,
-          color = ~marker_colour,
-          fillColor = ~marker_colour,
-          fillOpacity = fill_opacity,
-          popup = ~popup_content,
-          group = group_nm
-        )
-    }
-    
-    
-    # Variable-specific legend.
-    
-    legend_id = legend_ids[[group_nm]]
-    
-    legend_class = paste(
-      'mobs-var-legend',
-      paste0(
-        'mobs-var-legend-',
-        legend_id
-      ),
-      if (i > 1) {
-        'mobs-var-legend-hidden'
-      } else {
-        ''
-      }
-    )
-    
-    stat_formatter = get_modstat_legend_formatter(
-      stat
-    )
-    
-    legend_html = make_leaflet_bin_legend_html(
-      title = paste0(
-        group_nm,
-        ' - ',
-        stat_label(stat)
-      ),
-      breaks = these_breaks,
-      colours = pal_cols,
-      formatter = stat_formatter,
-      alpha = 1,
-      font_size = legend_font_size,
-      title_size = legend_title_size,
-      swatch_width = legend_swatch_width,
-      swatch_height = legend_swatch_height,
-      line_height = legend_line_height
-    )
-    
-    if (!is.null(legend_html)) {
-      
-      m = m %>%
-        leaflet::addControl(
-          html = legend_html,
-          position = legend_position,
-          className = legend_class
-        )
-    }
-  }
-  
-  
-  # Initially show only the first variable.
-  
-  if (length(group_names) > 1) {
-    
-    m = m %>%
-      leaflet::hideGroup(
-        group_names[-1]
-      )
-  }
-  
-  
-  # Layer controls.
-  
-  m = m %>%
-    htmlwidgets::prependContent(
-      htmltools::tags$style(
-        htmltools::HTML(
-          '
-          .mobs-var-legend-hidden {
-            display: none !important;
-          }
-          '
-        )
-      )
-    ) %>%
-    leaflet::addLayersControl(
-      baseGroups = basemap_groups,
-      overlayGroups = group_names,
-      position = 'topleft',
-      options = leaflet::layersControlOptions(
-        collapsed = FALSE
-      )
-    )
-  
-  
-  # Switch legend when the selected variable changes.
-  
-  if (length(group_names) > 1) {
-    
-    group_names_json = jsonlite::toJSON(
-      group_names,
-      auto_unbox = TRUE
-    )
-    
-    legend_id_lookup_json = jsonlite::toJSON(
-      as.list(legend_ids),
-      auto_unbox = TRUE
-    )
-    
-    m = m %>%
-      htmlwidgets::onRender(
-        glue::glue(
-          .open = '<<',
-          .close = '>>',
-          '
-function(el, x) {
-
-  var groups = <<group_names_json>>;
-  var legendIds = <<legend_id_lookup_json>>;
-
-  function setLegend(activeGroup) {
-
-    var legends = el.querySelectorAll(
-      ".mobs-var-legend"
-    );
-
-    legends.forEach(function(leg) {
-      leg.classList.add(
-        "mobs-var-legend-hidden"
-      );
-      leg.style.display = "none";
-    });
-
-    var activeLegendId = legendIds[
-      activeGroup
-    ];
-
-    if (activeLegendId) {
-
-      var activeLegends = el.querySelectorAll(
-        ".mobs-var-legend-" +
-        activeLegendId
-      );
-
-      activeLegends.forEach(function(leg) {
-        leg.classList.remove(
-          "mobs-var-legend-hidden"
-        );
-        leg.style.display = "block";
-      });
-    }
-  }
-
-  setTimeout(function() {
-
-    setLegend(groups[0]);
-
-    this.on(
-      "overlayadd",
-      function(e) {
-
-        if (
-          groups.indexOf(e.name) < 0
-        ) {
-          return;
-        }
-
-        groups.forEach(function(groupName) {
-
-          if (groupName === e.name) {
-            return;
-          }
-
-          var layer = this.layerManager
-            .getLayerGroup(
-              "marker",
-              groupName
-            );
-
-          if (
-            layer &&
-            this.hasLayer(layer)
-          ) {
-            this.removeLayer(layer);
-          }
-
-        }.bind(this));
-
-        setLegend(e.name);
-      }
-    );
-
-  }.bind(this), 250);
-}
-          '
-        )
-      )
-  }
-
-m
-}
-
 plot_mobs_testref_scatter_interactive = function(
     mobs_data,
     var_name,
@@ -17028,41 +16417,30 @@ plot_summary_maps = function(
   
   # Test palette
   
-  if (!is.null(test_colours_resolved)) {
-    
-    expected_n_colours =
-      length(test_breaks) - 1
-    
-    if (
-      length(test_colours_resolved) !=
-      expected_n_colours
-    ) {
-      
-      stop(
-        glue::glue(
-          'testref_colours must have exactly ',
-          '{expected_n_colours} colours to match ',
-          'length(test_breaks) = {length(test_breaks)}'
-        )
+  expected_n_colours = length(test_breaks) - 1
+  
+  if (
+    !is.null(test_colours_resolved) &&
+    length(test_colours_resolved) > 1 &&
+    length(test_colours_resolved) != expected_n_colours
+  ) {
+    stop(
+      glue::glue(
+        'testref_colours must have exactly ',
+        '{expected_n_colours} colours to match ',
+        'length(test_breaks) = {length(test_breaks)}'
       )
-    }
-    
-    test_pal =
-      test_colours_resolved
-    
-  } else {
-    
-    test_pal = resolve_palette(
-      pal_spec = testref_pal_pth,
-      n = length(test_breaks) - 1,
-      default_hcl = 'Viridis'
     )
   }
   
+  test_pal = resolve_palette(
+    pal_spec = test_colours_resolved %|||% testref_pal_pth,
+    n = expected_n_colours,
+    default_hcl = 'Viridis'
+  )
+  
   if (reverse_testref_pal) {
-    test_pal = rev(
-      test_pal
-    )
+    test_pal = rev(test_pal)
   }
   
   test_pal = scales::alpha(
@@ -17076,16 +16454,15 @@ plot_summary_maps = function(
     
     ref_pal = test_pal
     
-  } else if (!is.null(ref_colours_resolved)) {
+  } else {
     
-    expected_n_colours =
-      length(ref_breaks) - 1
+    expected_n_colours = length(ref_breaks) - 1
     
     if (
-      length(ref_colours_resolved) !=
-      expected_n_colours
+      !is.null(ref_colours_resolved) &&
+      length(ref_colours_resolved) > 1 &&
+      length(ref_colours_resolved) != expected_n_colours
     ) {
-      
       stop(
         glue::glue(
           'testref_colours must have exactly ',
@@ -17095,32 +16472,14 @@ plot_summary_maps = function(
       )
     }
     
-    ref_pal =
-      ref_colours_resolved
-    
-    if (reverse_testref_pal) {
-      ref_pal = rev(
-        ref_pal
-      )
-    }
-    
-    ref_pal = scales::alpha(
-      ref_pal,
-      alpha = alpha_stars
-    )
-    
-  } else {
-    
     ref_pal = resolve_palette(
-      pal_spec = testref_pal_pth,
-      n = length(ref_breaks) - 1,
+      pal_spec = ref_colours_resolved %|||% testref_pal_pth,
+      n = expected_n_colours,
       default_hcl = 'Viridis'
     )
     
     if (reverse_testref_pal) {
-      ref_pal = rev(
-        ref_pal
-      )
+      ref_pal = rev(ref_pal)
     }
     
     ref_pal = scales::alpha(
@@ -17738,59 +17097,38 @@ plot_summary_maps = function(
           raster_dpi
       )
       
+      # Absolute-difference palette
+      
+      expected_n_colours = length(absdiff_breaks) - 1
+      
       if (
-        !is.null(
-          absdiff_colours_resolved
-        )
+        !is.null(absdiff_colours_resolved) &&
+        length(absdiff_colours_resolved) > 1 &&
+        length(absdiff_colours_resolved) != expected_n_colours
       ) {
-        
-        expected_n_colours =
-          length(absdiff_breaks) - 1
-        
-        if (
-          length(
-            absdiff_colours_resolved
-          ) !=
-          expected_n_colours
-        ) {
-          
-          stop(
-            glue::glue(
-              'absdiff_colours must have exactly ',
-              '{expected_n_colours} colours to match ',
-              'length(absdiff_breaks) = {length(absdiff_breaks)}'
-            )
+        stop(
+          glue::glue(
+            'absdiff_colours must have exactly ',
+            '{expected_n_colours} colours to match ',
+            'length(absdiff_breaks) = {length(absdiff_breaks)}'
           )
-        }
-        
-        absdiff_pal =
-          absdiff_colours_resolved
-        
-      } else {
-        
-        absdiff_pal =
-          resolve_palette(
-            pal_spec =
-              absdiff_pal_pth,
-            n =
-              length(absdiff_breaks) - 1,
-            default_hcl =
-              'Blue-Red'
-          )
+        )
       }
+      
+      absdiff_pal = resolve_palette(
+        pal_spec = absdiff_colours_resolved %|||% absdiff_pal_pth,
+        n = expected_n_colours,
+        default_hcl = 'Blue-Red'
+      )
       
       if (reverse_absdiff_pal) {
-        
-        absdiff_pal = rev(
-          absdiff_pal
-        )
+        absdiff_pal = rev(absdiff_pal)
       }
       
-      absdiff_pal =
-        scales::alpha(
-          absdiff_pal,
-          alpha = alpha_stars
-        )
+      absdiff_pal = scales::alpha(
+        absdiff_pal,
+        alpha = alpha_stars
+      )
       
       p3 = p3 +
         ggplot2::scale_fill_manual(
@@ -18183,102 +17521,58 @@ plot_summary_maps = function(
       
       if (comparison_type == 'ratio') {
         
+        expected_n_colours = length(p4_breaks) - 1
+        
         if (
-          !is.null(
-            ratio_colours_resolved
-          )
+          !is.null(ratio_colours_resolved) &&
+          length(ratio_colours_resolved) > 1 &&
+          length(ratio_colours_resolved) != expected_n_colours
         ) {
-          
-          expected_n_colours =
-            length(p4_breaks) - 1
-          
-          if (
-            length(
-              ratio_colours_resolved
-            ) !=
-            expected_n_colours
-          ) {
-            
-            stop(
-              glue::glue(
-                'ratio_colours must have exactly ',
-                '{expected_n_colours} colours to match ',
-                'length(p4_breaks) = {length(p4_breaks)}'
-              )
+          stop(
+            glue::glue(
+              'ratio_colours must have exactly ',
+              '{expected_n_colours} colours to match ',
+              'length(p4_breaks) = {length(p4_breaks)}'
             )
-          }
-          
-          p4_pal =
-            ratio_colours_resolved
-          
-        } else {
-          
-          p4_pal =
-            resolve_palette(
-              pal_spec =
-                ratio_pal_pth,
-              n =
-                length(p4_breaks) - 1,
-              default_hcl =
-                'Viridis'
-            )
+          )
         }
         
+        p4_pal = resolve_palette(
+          pal_spec = ratio_colours_resolved %|||% ratio_pal_pth,
+          n = expected_n_colours,
+          default_hcl = 'Viridis'
+        )
+        
         if (reverse_ratio_pal) {
-          
-          p4_pal = rev(
-            p4_pal
-          )
+          p4_pal = rev(p4_pal)
         }
         
       } else {
         
+        expected_n_colours = length(p4_breaks) - 1
+        
         if (
-          !is.null(
-            reldiff_colours_resolved
-          )
+          !is.null(reldiff_colours_resolved) &&
+          length(reldiff_colours_resolved) > 1 &&
+          length(reldiff_colours_resolved) != expected_n_colours
         ) {
-          
-          expected_n_colours =
-            length(p4_breaks) - 1
-          
-          if (
-            length(
-              reldiff_colours_resolved
-            ) !=
-            expected_n_colours
-          ) {
-            
-            stop(
-              glue::glue(
-                'reldiff_colours must have exactly ',
-                '{expected_n_colours} colours to match ',
-                'length(p4_breaks) = {length(p4_breaks)}'
-              )
+          stop(
+            glue::glue(
+              'reldiff_colours must have exactly ',
+              '{expected_n_colours} colours to match ',
+              'length(p4_breaks) = {length(p4_breaks)}'
             )
-          }
-          
-          p4_pal =
-            reldiff_colours_resolved
-          
-        } else {
-          
-          p4_pal =
-            resolve_palette(
-              pal_spec =
-                reldiff_pal_pth,
-              n =
-                length(p4_breaks) - 1,
-              default_hcl =
-                'Blue-Red 3'
-            )
+          )
         }
         
+        p4_pal = resolve_palette(
+          pal_spec = reldiff_colours_resolved %|||% reldiff_pal_pth,
+          n = expected_n_colours,
+          default_hcl = 'Blue-Red 3'
+        )
+        
         if (reverse_reldiff_pal) {
-          
-          p4_pal = rev(
-            p4_pal
-          )
+          p4_pal = rev(p4_pal)
         }
       }
       
@@ -20368,49 +19662,43 @@ plot_summary_maps_leaflet = function(
           breaks = this_breaks
         )
       
-      cols =
-        get_palette_spec(
-          map_type = map_type,
-          var_for_breaks = var_for_breaks
-        )
+      # Resolve palette colours.
       
-      if (!is.null(cols)) {
-        
-        expected_n_colours =
-          length(this_breaks) - 1
-        
-        if (
-          length(cols) !=
-          expected_n_colours
-        ) {
-          
-          stop(
-            glue::glue(
-              'maps${switch(
-          map_type,
-          test = "testref_colours",
-          ref = "testref_colours",
-          absdiff = "absdiff_colours",
-          reldiff = "reldiff_colours",
-          ratio = "ratio_colours"
-        )} must have exactly {expected_n_colours} colours to match ',
-              'length(this_breaks) = {length(this_breaks)}.'
-            )
-          )
-        }
-        
-      } else {
-        
-        cols = resolve_palette(
-          pal_spec = get_palette_path(
-            map_type
-          ),
-          n = length(this_breaks) - 1,
-          default_hcl = get_default_hcl(
-            map_type
+      cols = get_palette_spec(
+        map_type = map_type,
+        var_for_breaks = var_for_breaks
+      )
+      
+      expected_n_colours = length(this_breaks) - 1
+      
+      # Explicit colour vectors must match the number of intervals.
+      # Named palettes and NCL palette files are resolved automatically.
+      
+      if (
+        !is.null(cols) &&
+        length(cols) > 1 &&
+        length(cols) != expected_n_colours
+      ) {
+        stop(
+          glue::glue(
+            'maps${switch(
+        map_type,
+        test = "testref_colours",
+        ref = "testref_colours",
+        absdiff = "absdiff_colours",
+        reldiff = "reldiff_colours",
+        ratio = "ratio_colours"
+      )} must have exactly {expected_n_colours} colours to match ',
+            'length(this_breaks) = {length(this_breaks)}.'
           )
         )
       }
+      
+      cols = resolve_palette(
+        pal_spec = cols %||% get_palette_path(map_type),
+        n = expected_n_colours,
+        default_hcl = get_default_hcl(map_type)
+      )
       
       pal = leaflet::colorBin(
         palette = cols,
@@ -23400,6 +22688,24 @@ resolve_palette = function(
   # - 'pal'
   # - a function(n) -> colours
   # - a character vector of colours
+  
+  # A leading '-' reverses a named palette or NCL palette file.
+  
+  if (
+    is.character(pal_spec) &&
+    length(pal_spec) == 1 &&
+    stringr::str_starts(pal_spec, '-')
+  ) {
+    return(
+      rev(
+        resolve_palette(
+          pal_spec = substring(pal_spec, 2),
+          n = n,
+          default_hcl = default_hcl
+        )
+      )
+    )
+  }
   
   if (is.null(pal_spec)) {
     return(

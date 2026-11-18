@@ -59,6 +59,8 @@
 #     reldiff_breaks_scale_cut = NULL,
 #     ratio_breaks_scale_cut = NULL,
 #
+#     # _colours can be a vector of colours or a palette specification defined
+#     # in the same style as in emep_qaqc_user_input.R  
 #     testref_colours = c('#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#bd0026', '#800026', '#4d0018'),
 #     absdiff_colours = c('#053061', '#2166ac', '#4393c3', '#92c5de', '#d1e5f0', '#fddbc7', '#f4a582', '#d6604d', '#b2182b', '#67001f'),
 #     reldiff_colours = c('#053061', '#2166ac', '#4393c3', '#92c5de', '#d1e5f0', '#fddbc7', '#f4a582', '#d6604d', '#b2182b', '#67001f'),
