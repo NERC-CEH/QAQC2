@@ -12709,7 +12709,9 @@ plot_mobs_stat_map = function(
     legend_title_size = 11,
     legend_swatch_width = 13,
     legend_swatch_height = 11,
-    legend_line_height = 12
+    legend_line_height = 12,
+    grouping_var = NULL,
+    grouping_var_label = NULL
 ) {
   
   basemap = match.arg(
@@ -12953,6 +12955,32 @@ plot_mobs_stat_map = function(
       popup_content = popup_content
     )
   
+  # Site grouping for map overlays.
+  
+  if (
+    !is.null(grouping_var) &&
+    grouping_var %in% names(sites_df)
+  ) {
+    
+    sites_df = sites_df %>%
+      dplyr::mutate(
+        map_group = as.character(.data[[grouping_var]]),
+        map_group = dplyr::coalesce(
+          map_group,
+          'Unknown'
+        )
+      )
+    
+  } else {
+    
+    sites_df = sites_df %>%
+      dplyr::mutate(
+        map_group = 'Sites'
+      )
+  }
+  
+  map_groups = unique(sites_df$map_group)
+  
   
   # Basemaps.
   
@@ -12988,39 +13016,68 @@ plot_mobs_stat_map = function(
       )
   }
   
-  # Site markers.
+  # Site markers grouped into separate Leaflet overlays.
   
-  if (inherits(sites_df, 'sf')) {
+  for (this_group in map_groups) {
     
-    m = m %>%
-      leaflet::addCircleMarkers(
-        data = sites_df,
-        radius = radius,
-        stroke = stroke,
-        weight = weight,
-        color = ~marker_colour,
-        fillColor = ~marker_colour,
-        fillOpacity = fill_opacity,
-        popup = ~popup_content
+    group_sites = sites_df %>%
+      dplyr::filter(
+        map_group == this_group
       )
     
-  } else {
+    group_label = if (
+      !is.null(grouping_var_label) &&
+      grouping_var_label != '' &&
+      this_group != 'Sites'
+    ) {
+      paste0(grouping_var_label, ': ', this_group)
+    } else {
+      this_group
+    }
     
-    m = m %>%
-      leaflet::addCircleMarkers(
-        data = sites_df,
-        lng = ~longitude,
-        lat = ~latitude,
-        radius = radius,
-        stroke = stroke,
-        weight = weight,
-        color = ~marker_colour,
-        fillColor = ~marker_colour,
-        fillOpacity = fill_opacity,
-        popup = ~popup_content
-      )
+    if (inherits(group_sites, 'sf')) {
+      
+      m = m %>%
+        leaflet::addCircleMarkers(
+          data = group_sites,
+          radius = radius,
+          stroke = stroke,
+          weight = weight,
+          color = ~marker_colour,
+          fillColor = ~marker_colour,
+          fillOpacity = fill_opacity,
+          popup = ~popup_content,
+          group = group_label
+        )
+      
+    } else {
+      
+      m = m %>%
+        leaflet::addCircleMarkers(
+          data = group_sites,
+          lng = ~longitude,
+          lat = ~latitude,
+          radius = radius,
+          stroke = stroke,
+          weight = weight,
+          color = ~marker_colour,
+          fillColor = ~marker_colour,
+          fillOpacity = fill_opacity,
+          popup = ~popup_content,
+          group = group_label
+        )
+    }
   }
   
+  overlay_groups = if (
+    !is.null(grouping_var_label) &&
+    grouping_var_label != '' &&
+    !identical(map_groups, 'Sites')
+  ) {
+    paste0(grouping_var_label, ': ', map_groups)
+  } else {
+    map_groups
+  }
   
   # Legend.
   
@@ -13048,20 +13105,27 @@ plot_mobs_stat_map = function(
       )
   }
   
+  # Basemap and site-group controls.
   
-  # Basemap control only.
-  
-  if (length(basemap_groups) > 1) {
-    
-    m = m %>%
-      leaflet::addLayersControl(
-        baseGroups = basemap_groups,
-        position = 'topleft',
-        options = leaflet::layersControlOptions(
-          collapsed = TRUE
-        )
+  m = m %>%
+    leaflet::addLayersControl(
+      baseGroups = if (length(basemap_groups) > 1) {
+        basemap_groups
+      } else {
+        NULL
+      },
+      overlayGroups = if (
+        !identical(map_groups, 'Sites')
+      ) {
+        overlay_groups
+      } else {
+        NULL
+      },
+      position = 'topleft',
+      options = leaflet::layersControlOptions(
+        collapsed = TRUE
       )
-  }
+    )
   
   # Use the same initial extent for all pollutant/statistic maps.
   

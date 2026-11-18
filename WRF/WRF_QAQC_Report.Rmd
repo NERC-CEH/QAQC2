@@ -5733,9 +5733,11 @@ mobs_stat_maps = stats_avail %>%
               stat = stat_nm,
               var_nm = var_nm,
               var_param_nm = mobs_var_params[[var_nm]],
-              var_params_list = WRF_VAR_PARAMS_LIST,
+              var_params_list = EMEP_VAR_PARAMS_LIST,
               stat_lookup = mobs_map_stat_labs,
-              palette = mobs_map_stat_palettes[[stat_nm]]
+              palette = mobs_map_stat_palettes[[stat_nm]],
+              grouping_var = MOBS_GROUPING_VAR,
+              grouping_var_label = MOBS_GROUPING_VAR_LABEL
             )
           }
         )
