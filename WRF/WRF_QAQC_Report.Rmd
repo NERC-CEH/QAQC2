@@ -735,7 +735,6 @@ if (isTRUE(make_summary_maps)) {
             ref_fname = this_ref_file,
             test_crs = TEST_CRS,
             ref_crs = this_ref_crs,
-            run_labels = RUN_LABELS,
             diff_direction = DIFF_DIRECTION
           )
 
