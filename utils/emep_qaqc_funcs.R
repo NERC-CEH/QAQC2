@@ -313,6 +313,12 @@ add_subprecip_long = function(mobs_df,
                               precip_method = 'observed_hourly',
                               precip_accum_clean = NULL) {
   
+  if (is.null(precip_method) ||
+      is.na(precip_method) ||
+      precip_method == 'none') {
+    return(mobs_df)
+  }
+  
   obs_prec = mobs_df %>%
     dplyr::filter(
       var == 'precip',
