@@ -16397,7 +16397,8 @@ plot_summary_maps = function(
     'k' = 1e3,
     'M' = 1e6,
     'G' = 1e9,
-    'T' = 1e12
+    'T' = 1e12,
+    'P' = 1e15
   )
   
   test_breaks = resolve_summary_breaks(
@@ -18933,7 +18934,14 @@ plot_summary_maps_leaflet = function(
   
   # Breaks and label helpers
   
-  summary_map_default_scale_cut = c(0, 'k' = 1e3, 'M' = 1e6, 'G' = 1e9, 'T' = 1e12)
+  summary_map_default_scale_cut = c(
+    0,
+    'k' = 1e3,
+    'M' = 1e6,
+    'G' = 1e9,
+    'T' = 1e12,
+    'P' = 1e15
+  )
   
   resolve_summary_leaflet_breaks = function(
     breaks,
