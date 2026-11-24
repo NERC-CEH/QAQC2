@@ -12093,7 +12093,8 @@ if (
       by = 'code'
     ) %>%
     format_mobs_group_labels(
-      grouping_var = MOBS_GROUPING_VAR
+      grouping_var = MOBS_GROUPING_VAR,
+      missing_label = 'Unclassified'
     )
 }
 

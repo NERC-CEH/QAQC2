@@ -4153,17 +4153,17 @@ format_mobs_group_labels = function(df,
     )
 }
 
-format_mobs_group_values = function(x,
-                                    missing_label = 'Unclassified') {
+format_mobs_group_values = function(
+    x,
+    missing_label = 'Unclassified'
+) {
   
   x = as.character(x)
   
   dplyr::if_else(
     is.na(x) | x == '',
     missing_label,
-    stringr::str_to_sentence(
-      stringr::str_replace_all(x, '_', ' ')
-    )
+    x
   )
 }
 
@@ -12326,22 +12326,13 @@ plot_mobs_sites_map2 = function(
   sites_df = sites_df %>%
     dplyr::mutate(
       leaflet_group = if (!is.null(group_column)) {
-        
         format_mobs_group_values(
           .data[[group_column]],
           missing_label = 'Unclassified'
         )
-        
       } else {
-        
-        legend_label
-      },
-      leaflet_group = dplyr::if_else(
-        is.na(leaflet_group) |
-          leaflet_group == '',
-        'Unclassified',
-        leaflet_group
-      )
+        format_mobs_group_values(legend_label)
+      }
     )
   
   add_lon_lat = function(x) {
@@ -12475,17 +12466,6 @@ plot_mobs_sites_map2 = function(
     
   } else {
     
-    if (
-      !is.null(names(colours)) &&
-      !any(names(colours) == '')
-    ) {
-      
-      names(colours) = format_mobs_group_values(
-        names(colours),
-        missing_label = 'Unclassified'
-      )
-    }
-    
     lvls_present = sites_df$leaflet_group %>%
       unique() %>%
       stats::na.omit() %>%
@@ -12603,12 +12583,6 @@ plot_mobs_sites_map2 = function(
           leaflet_group = format_mobs_group_values(
             .data[[group_column]],
             missing_label = 'Unclassified'
-          ),
-          leaflet_group = dplyr::if_else(
-            is.na(leaflet_group) |
-              leaflet_group == '',
-            'Unclassified',
-            leaflet_group
           )
         )
       
@@ -12648,7 +12622,7 @@ plot_mobs_sites_map2 = function(
     # Redraw selected sites in their original group colour
     if (
       !is.null(group_column) &&
-      exists('pal')
+      group_column %in% names(highlight_sites_df)
     ) {
       
       m = m %>%
