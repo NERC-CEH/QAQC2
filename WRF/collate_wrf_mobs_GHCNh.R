@@ -169,35 +169,24 @@ selected_sites_output_pth = fs::path_abs(
   )
 )
 
-if (fs::file_exists(selected_sites_source_pth)) {
-  
-  if (selected_sites_source_pth != selected_sites_output_pth) {
-    
-    if (fs::file_exists(selected_sites_output_pth)) {
-      stop(
-        'A selected-sites file with the same name already exists in ',
-        'the output directory: ',
-        selected_sites_output_pth
-      )
-    }
-    
-    fs::file_move(
-      selected_sites_source_pth,
-      selected_sites_output_pth
-    )
-  }
-  
-} else if (!fs::file_exists(selected_sites_output_pth)) {
+if (!fs::file_exists(selected_sites_source_pth)) {
   
   stop(
-    'File containing selected station codes was not found at either: ',
-    selected_sites_source_pth,
-    ' or ',
-    selected_sites_output_pth
+    "File containing selected station codes was not found: ",
+    selected_sites_source_pth
   )
 }
 
-# From this point onwards, always use the path in data_pth_out.
+if (selected_sites_source_pth != selected_sites_output_pth) {
+  
+  fs::file_copy(
+    selected_sites_source_pth,
+    selected_sites_output_pth,
+    overwrite = TRUE
+  )
+}
+
+# From this point onwards, always use the copy in data_pth_out.
 selected_sites_pth = selected_sites_output_pth
 
 selected_site_codes = readr::read_lines(
