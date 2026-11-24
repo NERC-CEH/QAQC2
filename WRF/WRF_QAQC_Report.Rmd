@@ -1901,6 +1901,16 @@ sites_geo = readr::read_rds(
     .keep_all = TRUE
   )
 
+# add 'site' from GHCNh 'name' for downstream processing
+if (!'site' %in% names(sites_geo) &&
+    'name' %in% names(sites_geo)) {
+
+  sites_geo = sites_geo %>%
+    dplyr::mutate(
+      site = name
+    )
+}
+
 if (
   !is.null(MOBS_GROUPING_VAR) &&
   !MOBS_GROUPING_VAR %in% names(sites_geo)
