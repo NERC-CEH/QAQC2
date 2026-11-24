@@ -191,7 +191,7 @@ WRF_VAR_PARAMS_LIST = list(
       testref_breaks = seq(0, 10, 1),
       absdiff_breaks = MAP_TEMPLATE_DIFF_BREAKS,
       reldiff_breaks = 10 * MAP_TEMPLATE_DIFF_BREAKS,
-      plot_reldiff = FALSE
+      plot_reldiff = TRUE
     ),
     
     temporal = list(

@@ -6804,6 +6804,10 @@ get_var_param = function(
     default = NULL
 ) {
   
+  if (is.null(var_params_list)) {
+    return(default)
+  }
+  
   var_id = resolve_var_id(
     var = var,
     var_params_list = var_params_list
@@ -7741,7 +7745,8 @@ make_map_label_formatter = function(
       'k' = 1e3,
       'M' = 1e6,
       'G' = 1e9,
-      'T' = 1e12
+      'T' = 1e12,
+      'P' = 1e15
     ),
     default_accuracy = NULL,
     drop0trailing = TRUE
@@ -15646,23 +15651,10 @@ plot_summary_maps = function(
     break_key
   ) {
     
-    if (!is.null(var_params_list)) {
-      
-      return(
-        make_map_label_formatter(
-          var = var,
-          break_key = break_key,
-          var_params_list = var_params_list,
-          default_scale_cut = summary_map_default_scale_cut,
-          default_accuracy = NULL,
-          drop0trailing = TRUE
-        )
-      )
-    }
-    
-    scales::label_number(
-      scale_cut = summary_map_default_scale_cut,
-      drop0trailing = TRUE
+    make_map_label_formatter(
+      var = var,
+      break_key = break_key,
+      var_params_list = var_params_list
     )
   }
   
@@ -16391,15 +16383,6 @@ plot_summary_maps = function(
   }
   
   # Test / Reference scales
-  
-  summary_map_default_scale_cut = c(
-    0,
-    'k' = 1e3,
-    'M' = 1e6,
-    'G' = 1e9,
-    'T' = 1e12,
-    'P' = 1e15
-  )
   
   test_breaks = resolve_summary_breaks(
     breaks = testref_breaks,
@@ -18934,15 +18917,6 @@ plot_summary_maps_leaflet = function(
   
   # Breaks and label helpers
   
-  summary_map_default_scale_cut = c(
-    0,
-    'k' = 1e3,
-    'M' = 1e6,
-    'G' = 1e9,
-    'T' = 1e12,
-    'P' = 1e15
-  )
-  
   resolve_summary_leaflet_breaks = function(
     breaks,
     var,
@@ -19037,9 +19011,7 @@ plot_summary_maps_leaflet = function(
       
       10^(
         -max(
-          decimal_count(
-            finite_breaks
-          ),
+          decimal_count(finite_breaks),
           na.rm = TRUE
         )
       )
@@ -19049,24 +19021,11 @@ plot_summary_maps_leaflet = function(
       NULL
     }
     
-    if (!is.null(var_params_list)) {
-      
-      return(
-        make_map_label_formatter(
-          var = var,
-          break_key = break_key,
-          var_params_list = var_params_list,
-          default_scale_cut = summary_map_default_scale_cut,
-          default_accuracy = default_accuracy,
-          drop0trailing = TRUE
-        )
-      )
-    }
-    
-    scales::label_number(
-      accuracy = default_accuracy,
-      scale_cut = summary_map_default_scale_cut,
-      drop0trailing = TRUE
+    make_map_label_formatter(
+      var = var,
+      break_key = break_key,
+      var_params_list = var_params_list,
+      default_accuracy = default_accuracy
     )
   }
   
