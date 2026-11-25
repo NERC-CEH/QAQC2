@@ -10275,77 +10275,57 @@ mobs_tseries_to_pdf = function(
   
   # Construct site information for page titles.
   
-  extra_info_tbl = info_tbl %>%
+  site_name = info_tbl %>%
     dplyr::select(
-      -dplyr::any_of(
-        c(
-          'code',
-          'site',
-          'station',
-          'year'
-        )
-      )
+      dplyr::any_of(c('site', 'station', 'name'))
     ) %>%
-    purrr::discard(
-      ~ all(
-        is.na(.x)
-      )
-    )
+    unlist(use.names = FALSE) %>%
+    as.character()
   
-  if (length(extra_info_tbl) > 0) {
+  site_name = site_name[
+    !is.na(site_name) & site_name != ''
+  ]
+  
+  site_title_part = if (length(site_name) > 0) {
     
-    extra_info = extra_info_tbl %>%
-      tidyr::unite(
-        col = 'dummy',
-        sep = ', '
-      ) %>%
-      dplyr::pull(
-        .data$dummy
-      ) %>%
-      na.omit()
-    
-    extra_info = stringr::str_glue(
-      '({extra_info})'
+    stringr::str_glue(
+      '{textclean::replace_non_ascii(site_name[1])} ({info_tbl[["code"]]})'
     )
     
   } else {
     
-    extra_info = ''
+    info_tbl[['code']]
   }
   
-  if (!any(
-    c(
-      'site',
-      'station'
-    ) %in% names(info_tbl)
-  )) {
+  # Append site coordinates, where available.
+  
+  lat_col = intersect(
+    c('latitude', 'lat'),
+    names(info_tbl)
+  )[1]
+  
+  lon_col = intersect(
+    c('longitude', 'lon', 'lng'),
+    names(info_tbl)
+  )[1]
+  
+  if (
+    !is.na(lat_col) &&
+    !is.na(lon_col) &&
+    !is.na(info_tbl[[lat_col]]) &&
+    !is.na(info_tbl[[lon_col]])
+  ) {
     
-    s_name = info_tbl[['code']]
-    
-  } else {
-    
-    s_name = NULL
+    site_title_part = stringr::str_c(
+      site_title_part,
+      sprintf(
+        '[%.4f, %.4f]',
+        info_tbl[[lat_col]],
+        info_tbl[[lon_col]]
+      ),
+      sep = ' '
+    )
   }
-  
-  site_title_part = c(
-    if ('site' %in% names(info_tbl)) {
-      textclean::replace_non_ascii(
-        info_tbl[['site']]
-      )
-    } else {
-      NULL
-    },
-    if ('station' %in% names(info_tbl)) {
-      textclean::replace_non_ascii(
-        info_tbl[['station']]
-      )
-    } else {
-      NULL
-    },
-    s_name,
-    extra_info
-  )
-  
   
   # Construct summary page title.
   
