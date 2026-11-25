@@ -3179,8 +3179,7 @@ if (length(MOBS_STATION_REPORT_TSERIES) > 0) {
   
   site_name_col = c(
     'site',
-    'site_name',
-    'name'
+    'site_name'
   ) %>%
     intersect(
       names(sites_geo)
