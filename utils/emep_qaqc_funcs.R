@@ -9556,15 +9556,7 @@ make_site_popup_content = function(
     'code',
     'station',
     'site',
-    'name',
-    if (
-      !is.null(group_column) &&
-      'leaflet_group' %in% names(df)
-    ) {
-      'leaflet_group'
-    } else {
-      NULL
-    },
+    group_column,
     'network',
     elev_col,
     'year'
@@ -9583,10 +9575,10 @@ make_site_popup_content = function(
   
   if (
     !is.null(group_column) &&
-    'leaflet_group' %in% names(info_labels)
+    group_column %in% names(info_labels)
   ) {
     
-    info_labels[['leaflet_group']] = if (
+    info_labels[[group_column]] = if (
       !is.null(grouping_var_label) &&
       grouping_var_label != ''
     ) {
@@ -9619,7 +9611,14 @@ make_site_popup_content = function(
       '<b>',
       .x,
       ':</b> ',
-      popup_value(df[[.y]])
+      if (!is.null(group_column) && .y == group_column) {
+        format_mobs_group_values(
+          df[[.y]],
+          missing_label = 'Unclassified'
+        )
+      } else {
+        popup_value(df[[.y]])
+      }
     )
   ) %>%
     purrr::transpose() %>%
@@ -12862,82 +12861,31 @@ plot_mobs_stat_map = function(
   
   
   # Popup.
-  
-  popup_value = function(x) {
-    
-    if (is.numeric(x)) {
-      
-      out = format(
-        round(
-          x,
-          digits
-        ),
-        trim = TRUE,
-        scientific = FALSE,
-        nsmall = 0
-      )
-      
-      out[is.na(x)] = ''
-      
-      return(out)
-    }
-    
-    x = as.character(x)
-    x[is.na(x)] = ''
-    
-    x
-  }
-  
-  info_vars = intersect(
-    c(
-      'code',
-      'station',
-      'site',
-      'network',
-      'elevation',
-      'year'
-    ),
-    names(sites_df)
+
+  popup_content = make_site_popup_content(
+    df = sites_df,
+    group_column = grouping_var,
+    grouping_var_label = grouping_var_label
   )
   
-  popup_vars = c(
-    info_vars,
-    stat
+  stat_value = format(
+    round(sites_df[[stat]], digits),
+    trim = TRUE,
+    scientific = FALSE,
+    nsmall = 0
   )
   
-  popup_labels = c(
-    stringr::str_to_sentence(
-      info_vars
-    ),
-    stat_label
-  ) %>%
-    stats::setNames(
-      popup_vars
-    )
-  
-  popup_content = purrr::map2(
-    popup_labels,
-    names(popup_labels),
-    function(lbl, nm) {
-      
-      stringr::str_c(
-        '<b>',
-        lbl,
-        ':</b> ',
-        popup_value(
-          sites_df[[nm]]
-        )
-      )
-    }
-  ) %>%
-    purrr::transpose() %>%
-    stringi::stri_join_list(
-      sep = '<br/>'
-    )
+  stat_value[is.na(sites_df[[stat]])] = 'Not available'
   
   sites_df = sites_df %>%
     dplyr::mutate(
-      popup_content = popup_content
+      popup_content = paste0(
+        popup_content,
+        '<br/><b>',
+        stat_label,
+        ':</b> ',
+        stat_value
+      )
     )
   
   # Site grouping for map overlays.
