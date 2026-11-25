@@ -2370,11 +2370,10 @@ na2empty = function(x) if (is.null(x)) "" else ifelse(is.na(x), "", as.character
 code_vec    = if ("code"    %in% names(sites_geo)) sites_geo$code    else rep("", nrow(sites_geo))
 station_vec = if ("station" %in% names(sites_geo)) sites_geo$station else rep("", nrow(sites_geo))
 site_vec    = if ("site"    %in% names(sites_geo)) sites_geo$site    else rep("", nrow(sites_geo))
-name_vec    = if ("name"    %in% names(sites_geo)) sites_geo$name    else rep("", nrow(sites_geo))
 
 sites_geo_search = sites_geo %>%
   mutate(search_key = str_squish(
-    paste(na2empty(code_vec), na2empty(station_vec), na2empty(site_vec), na2empty(name_vec))
+    paste(na2empty(code_vec), na2empty(station_vec), na2empty(site_vec))
   ))
 
 search_choices = sites_geo_search %>%
