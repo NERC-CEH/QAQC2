@@ -12894,7 +12894,7 @@ plot_mobs_stat_map = function(
       'station',
       'site',
       'network',
-      'elev(m)',
+      'elevation',
       'year'
     ),
     names(sites_df)

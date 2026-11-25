@@ -2070,6 +2070,18 @@ sites_geo = sites_geo %>%
     .keep_all = TRUE
   )
 
+sites_meta = if (inherits(sites_geo, 'sf')) {
+  sf::st_drop_geometry(sites_geo)
+} else {
+  sites_geo
+}
+
+sites_meta = sites_meta %>%
+  dplyr::distinct(
+    code,
+    .keep_all = TRUE
+  )
+
 # Record task timing.
 
 # qaqc_task_timings[['Load test MOBS']] = tibble::tibble(
@@ -2559,19 +2571,6 @@ if (isTRUE(MOBS_USE_LOCAL_TIME)) {
       timezone = NA_character_
     )
 }
-
-sites_meta = if (inherits(sites_geo, 'sf')) {
-  sf::st_drop_geometry(sites_geo)
-} else {
-  sites_geo
-}
-
-sites_meta = sites_meta %>%
-  dplyr::select(
-    dplyr::any_of(c('code', 'station', 'site', 'name', 'timezone', MOBS_GROUPING_VAR))
-  ) %>%
-  dplyr::distinct()
-
 
 mobs_tseries_workers = set_parallel_plan(
   workers_requested = worker_cap,
@@ -5599,31 +5598,26 @@ rm(
 
 ```{r prepare-mobs-stats-map-data, eval = PLOT_MOBS_MODSTAT_MAPS && isTRUE(mobs_temporal_modstats_available), include = FALSE}
 
-sites_meta = if (inherits(sites_geo, 'sf')) {
-  sf::st_drop_geometry(sites_geo)
-} else {
-  sites_geo
-}
-
 test_mobs_site_stats2 = test_mobs_regular_site_stats %>%
   dplyr::ungroup() %>%
   dplyr::left_join(
     sites_meta %>%
       dplyr::select(
+        code,
         dplyr::any_of(
-          c(
-            'code',
-            'station',
-            'site',
-            'name',
-            'elev(m)',
-            'latitude',
-            'longitude',
-            'call'
+          setdiff(
+            c(
+              'station',
+              'site',
+              'elevation',
+              'latitude',
+              'longitude',
+              'call'
+            ),
+            names(test_mobs_regular_site_stats)
           )
         )
-      ) %>%
-      dplyr::distinct(),
+      ),
     by = 'code'
   )
 
