@@ -9768,6 +9768,24 @@ if (isTRUE(MOBS_USE_LOCAL_TIME)) {
     )
 }
 
+sites_meta_tseries = sites_geo %>%
+  sf::st_drop_geometry() %>%
+  dplyr::select(
+    dplyr::any_of(c(
+      'code',
+      'station',
+      'site',
+      'name',
+      'latitude',
+      'longitude',
+      'lat',
+      'lon',
+      'lng',
+      'timezone',
+      MOBS_GROUPING_VAR
+    ))
+  )
+
 mobs_tseries_workers = set_parallel_plan(
   workers_requested = worker_cap,
   max_workers = 4,
@@ -9802,7 +9820,7 @@ mobs_tseries_opts = furrr::furrr_options(
     'MOBS_TSERIES_VARS',
     'MOBS_TSERIES_SUMMARY_TIME',
     'MOBS_TSERIES_SUMMARY_STAT',
-    'sites_meta'
+    'sites_meta_tseries'
   )
 )
 
@@ -9925,7 +9943,7 @@ mobs_plotlist = mobs_list_for_plot %>%
       
       site_tzone = resolve_mobs_plot_tzone(
         site_code = site_code,
-        sites_meta = sites_meta,
+        sites_meta = sites_meta_tseries,
         mobs_tzone = mobs_tzone,
         timezone_col = 'timezone'
       )
@@ -9950,7 +9968,7 @@ mobs_plotlist = mobs_list_for_plot %>%
         avg_time = MOBS_TSERIES_SUMMARY_TIME,
         summary_stat = MOBS_TSERIES_SUMMARY_STAT
       ) %>%
-      dplyr::left_join(sites_meta, by = 'code')
+      dplyr::left_join(sites_meta_tseries, by = 'code')
     },
     .options = mobs_tseries_opts
   ) %>%
