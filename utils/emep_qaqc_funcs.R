@@ -24319,7 +24319,7 @@ summarise_emep_var = function(
     )
   }
   
-  if (stringr::str_detect(var_name, '^(Emis|DDEP|WDEP)')) {
+  if (stringr::str_detect(var_name, '^(Emis|Sec_Emis|DDEP|WDEP)')) {
     summary_method = 'total'
   } else if (stringr::str_detect(var_name, '^(SURF|D3)')) {
     summary_method = 'mean'
