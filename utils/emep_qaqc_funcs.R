@@ -2728,7 +2728,9 @@ extend_map_breaks_to_data_range = function(breaks,
   sort(unique(breaks))
 }
 
-extract_runlog_emissions = function(log_pth) {
+extract_runlog_emissions = function(log_pth, emep_version) {
+  
+  emep_version = numeric_version(emep_version)
   
   log_lines = readLines(
     log_pth,
@@ -2743,23 +2745,39 @@ extract_runlog_emissions = function(log_pth) {
     return(tibble::tibble())
   }
   
-  combined_blocks = blocks[
-    purrr::map_chr(
-      blocks,
-      'table_type'
-    ) == 'combined'
-  ]
+  # EMEP versions 5.0 and later:
+  # use combined emissions tables.
+  #
+  # Version 5.0: EMTBL
+  # Later versions: EMSUM
   
-  source_blocks = blocks[
-    purrr::map_chr(
+  if (emep_version >= numeric_version('5.0')) {
+    
+    table_prefix = if (
+      emep_version == numeric_version('5.0')
+    ) {
+      'EMTBL'
+    } else {
+      'EMSUM'
+    }
+    
+    combined_blocks = purrr::keep(
       blocks,
-      'table_type'
-    ) == 'source'
-  ]
-  
-  # Preferred approach:
-  # use EMEP's combined emissions table if available.
-  if (length(combined_blocks) > 0) {
+      ~ .x$table_type == 'combined' &&
+        .x$table_prefix == table_prefix
+    )
+    
+    if (length(combined_blocks) == 0) {
+      
+      warning(
+        glue::glue(
+          "No combined {table_prefix} emissions tables found ",
+          "for EMEP version {emep_version} in {log_pth}."
+        )
+      )
+      
+      return(tibble::tibble())
+    }
     
     return(
       combined_blocks %>%
@@ -2769,7 +2787,15 @@ extract_runlog_emissions = function(log_pth) {
     )
   }
   
-  # Fall back to the existing source-file parser.
+  # EMEP versions earlier than 5.0:
+  # extract individual emission source tables.
+  
+  source_blocks = purrr::keep(
+    blocks,
+    ~ .x$table_type == 'source' &&
+      .x$table_prefix == 'EMTBL'
+  )
+  
   source_blocks %>%
     purrr::map_dfr(
       function(block) {
