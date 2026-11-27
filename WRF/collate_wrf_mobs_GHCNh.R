@@ -363,6 +363,10 @@ xlong = reticulate::py_to_r(
   ds_land$variables[['XLONG']]$`__getitem__`(reticulate::tuple(0L))
 )
 
+hgt = reticulate::py_to_r(
+  ds_land$variables[['HGT']]$`__getitem__`(reticulate::tuple(0L))
+)
+
 ds_land$close()
 
 # WRF arrays have dimensions [south_north, west_east].
@@ -483,6 +487,51 @@ if (isTRUE(MOBS_COASTAL_LAND_CORRECTION)) {
   logger::log_info(
     'Applied coastal land correction to {sum(idx_tibble$coastal_land_correction)} stations'
   )
+  
+  corrected_sites = idx_tibble %>%
+    dplyr::filter(coastal_land_correction) %>%
+    dplyr::select(
+      code,
+      nearest_distance_km,
+      land_distance_km
+    ) %>%
+    dplyr::left_join(
+      sites_geo %>%
+        sf::st_drop_geometry() %>%
+        dplyr::select(
+          code,
+          dplyr::any_of(c('site', 'station', 'name'))
+        ) %>%
+        dplyr::distinct(code, .keep_all = TRUE),
+      by = 'code'
+    ) %>%
+    dplyr::relocate(
+      dplyr::any_of(c('site', 'station', 'name')),
+      .after = code
+    ) %>%
+    dplyr::mutate(
+      dplyr::across(
+        c(nearest_distance_km, land_distance_km),
+        ~ round(.x, 2)
+      )
+    ) %>%
+    dplyr::arrange(code)
+  
+  if (nrow(corrected_sites) > 0) {
+    
+    logger::log_info('Stations with coastal land correction:')
+    
+    logger::log_info(
+      paste(
+        capture.output(
+          print(corrected_sites, n = Inf, width = Inf)
+        ),
+        collapse = '\n'
+      ),
+      .formatter = logger::formatter_paste
+    )
+  }
+  
 }
 
 idx_tibble = idx_tibble %>%
@@ -499,10 +548,57 @@ idx_tibble = idx_tibble %>%
     )
   )
 
+site_grid_meta = idx_tibble %>%
+  dplyr::transmute(
+    code,
+    i_py_nearest,
+    j_py_nearest,
+    i_py,
+    j_py,
+    cell_id = stringr::str_glue('{i_py}_{j_py}'),
+    wrf_nearest_longitude = xlong[
+      cbind(j_py_nearest + 1L, i_py_nearest + 1L)
+    ],
+    wrf_nearest_latitude = xlat[
+      cbind(j_py_nearest + 1L, i_py_nearest + 1L)
+    ],
+    wrf_nearest_elevation = hgt[
+      cbind(j_py_nearest + 1L, i_py_nearest + 1L)
+    ],
+    wrf_longitude = xlong[
+      cbind(j_py + 1L, i_py + 1L)
+    ],
+    wrf_latitude = xlat[
+      cbind(j_py + 1L, i_py + 1L)
+    ],
+    wrf_elevation = hgt[
+      cbind(j_py + 1L, i_py + 1L)
+    ],
+    wrf_nearest_xland,
+    wrf_xland = xland[
+      cbind(j_py + 1L, i_py + 1L)
+    ],
+    nearest_distance_km,
+    land_distance_km,
+    extraction_distance_km,
+    coastal_land_correction,
+    site_type
+  )
+
+checkmate::assert_names(
+  names(site_grid_meta),
+  must.include = 'code'
+)
+
+stopifnot(
+  setequal(sites_geo$code, site_grid_meta$code)
+)
+
 sites_geo = sites_geo %>%
-  dplyr::bind_cols(idx_tibble) %>%
-  dplyr::mutate(
-    cell_id = stringr::str_glue('{i_py}_{j_py}')
+  dplyr::left_join(
+    site_grid_meta,
+    by = 'code',
+    relationship = 'one-to-one'
   )
 
 if (!isTRUE(MOBS_INCLUDE_MARINE_SITES)) {
