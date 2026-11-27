@@ -335,7 +335,14 @@ if (inherits(idx_py, 'numpy.ndarray')) {
   }
 }
 
+stopifnot(
+  is.matrix(idx_py_mat),
+  nrow(idx_py_mat) == nrow(sites_geo),
+  ncol(idx_py_mat) == 2L
+)
+
 idx_tibble = tibble::tibble(
+  code = sites_geo$code,
   i_py = as.integer(idx_py_mat[, 1]),
   j_py = as.integer(idx_py_mat[, 2])
 ) %>%
