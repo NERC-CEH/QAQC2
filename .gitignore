@@ -2,3 +2,5 @@
 /EMEP/R_render_que.sh
 /WRF/R_render_que.sh
 /WRF/GHCN_que.sh
+/WRF/user_input_files/wrf_qaqc_user_input_tester.R
+/EMEP/user_input_files/emep_qaqc_user_input_tester.R
